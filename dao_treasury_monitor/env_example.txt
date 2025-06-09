@@ -1,0 +1,36 @@
+# === SOLANA API (уже настроены в pool_analyzer.py) ===
+HELIUS_API_KEY=d4af7b72-f199-4d77-91a9-11d8512c5e42
+HELIUS_RPC_URL=https://mainnet.helius-rpc.com/?api-key=d4af7b72-f199-4d77-91a9-11d8512c5e42
+BITQUERY_API_KEY=ory_at_w20OBh_CPS-k6ODVkbnRecl1GAYuOlk363VxvJCvr5A.6NAktl8DPylp3oOoYxl4arEF9mnWRgq_0v9j2_WdPPs
+RAYDIUM_API_V3_BASE_URL=https://api-v3.raydium.io
+
+# === ЦЕНЫ И МЕТАДАННЫЕ ===
+COINGECKO_API_KEY=CG-9MrJcucBMMx5HKnXeVBD8oSb
+COINGECKO_ENDPOINT=https://pro-api.coingecko.com/api/v3/
+
+# === ETHEREUM API (Этап 3 - нужно будет получить) ===
+# ALCHEMY_API_KEY=your_alchemy_key_here
+# INFURA_PROJECT_ID=your_infura_project_id_here
+# ETHEREUM_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_KEY
+
+# === УВЕДОМЛЕНИЯ (Этап 4 - опционально) ===
+# TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+# TELEGRAM_CHAT_ID=your_chat_id
+# DISCORD_WEBHOOK_URL=your_discord_webhook
+
+# === БАЗА ДАННЫХ ===
+# Для локальной разработки - SQLite
+DATABASE_TYPE=sqlite
+DATABASE_PATH=dao_treasury_monitor.db
+
+# Для Railway деплоймента - PostgreSQL (будет добавлено автоматически)
+# DATABASE_URL=postgresql://user:password@host:port/database
+
+# === НАСТРОЙКИ МОНИТОРИНГА ===
+ALERT_THRESHOLD_USD=10000
+MONITORING_INTERVAL_SECONDS=30
+POOL_MONITORING_INTERVAL_SECONDS=45
+
+# === ЛОГИРОВАНИЕ ===
+LOG_LEVEL=INFO
+LOG_FILE=dao_treasury_monitor.log 
