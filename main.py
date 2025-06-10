@@ -169,13 +169,21 @@ class DAOTreasuryMonitorApp:
         start_time = time.time()
         
         try:
+            self.logger.info("Starting monitoring cycle")
+            
             # Запускаем Solana мониторинг
             if self.solana_monitor:
+                self.logger.info("Running Solana monitoring...")
                 await self.solana_monitor.run_monitoring_cycle()
+            else:
+                self.logger.warning("Solana monitor not available")
             
             # Запускаем Ethereum мониторинг
             if self.ethereum_monitor:
+                self.logger.info("Running Ethereum monitoring...")
                 await self.ethereum_monitor.monitor_treasury_addresses()
+            else:
+                self.logger.warning("Ethereum monitor not available")
             
             # Обновляем время активности для health check
             if self.health_server:
@@ -186,6 +194,8 @@ class DAOTreasuryMonitorApp:
             
         except Exception as e:
             self.logger.error(f"Error in monitoring cycle: {e}")
+            import traceback
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
     
     async def start_monitoring(self):
         """Запуск основного мониторинга с price tracking и health check"""

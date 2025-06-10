@@ -43,7 +43,6 @@ class EthereumMonitor:
     def __init__(self, rpc_url: str, database: DAOTreasuryDatabase):
         self.rpc_url = rpc_url
         self.database = database
-        self.w3 = Web3(Web3.HTTPProvider(rpc_url))
         self.session = None
         self.http_client = None
         
@@ -61,14 +60,22 @@ class EthereumMonitor:
         # Treasury адреса для мониторинга
         self.treasury_addresses = [dao.treasury_address.lower() for dao in ETHEREUM_DAOS]
         
-        logger.info(f"Initialized Ethereum monitor for {len(self.treasury_addresses)} treasury addresses")
+        logger.info(f"Initializing Ethereum monitor for {len(self.treasury_addresses)} treasury addresses")
+        logger.info(f"Using RPC URL: {rpc_url[:50]}...")
         
-        # Проверяем подключение
-        if self.w3.is_connected():
+        # Инициализируем Web3 с обработкой ошибок
+        try:
+            self.w3 = Web3(Web3.HTTPProvider(rpc_url))
+            logger.info("Web3 provider created successfully")
+            
+            # Проверяем подключение
             latest_block = self.w3.eth.block_number
-            logger.info(f"Connected to Ethereum node. Latest block: {latest_block}")
-        else:
-            logger.error("Failed to connect to Ethereum node")
+            logger.info(f"✅ Connected to Ethereum node. Latest block: {latest_block}")
+            
+        except Exception as e:
+            logger.error(f"❌ Failed to connect to Ethereum node: {e}")
+            logger.error(f"RPC URL: {rpc_url}")
+            raise Exception(f"Ethereum connection failed: {e}")
     
     async def start_session(self):
         """Инициализация HTTP сессий"""
