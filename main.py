@@ -138,6 +138,13 @@ class DAOTreasuryMonitorApp:
             else:
                 self.logger.warning("Helius API key not found - Solana monitoring disabled")
             
+            # Подробная диагностика Ethereum мониторинга
+            self.logger.info("=== ETHEREUM MONITORING DIAGNOSTICS ===")
+            self.logger.info(f"ETHEREUM_RPC_URL env var: {os.getenv('ETHEREUM_RPC_URL')}")
+            self.logger.info(f"RAILWAY_ENVIRONMENT: {os.getenv('RAILWAY_ENVIRONMENT')}")
+            self.logger.info(f"self.ethereum_rpc_url: {self.ethereum_rpc_url}")
+            self.logger.info(f"get_ethereum_rpc_url() result: {get_ethereum_rpc_url()}")
+            
             # Инициализируем Ethereum мониторинг с диагностикой
             self.logger.info(f"Checking Ethereum RPC URL: {self.ethereum_rpc_url}")
             if self.ethereum_rpc_url:
@@ -146,11 +153,15 @@ class DAOTreasuryMonitorApp:
                     self.logger.info("✅ Ethereum monitor initialized successfully")
                 except Exception as e:
                     self.logger.error(f"❌ Failed to initialize Ethereum monitor: {e}")
+                    import traceback
+                    self.logger.error(f"Full traceback: {traceback.format_exc()}")
                     self.ethereum_monitor = None
             else:
                 self.logger.warning("❌ Ethereum RPC URL not found - Ethereum monitoring disabled")
                 self.logger.info(f"   ETHEREUM_RPC_URL env var: {os.getenv('ETHEREUM_RPC_URL')}")
                 self.logger.info(f"   RAILWAY_ENVIRONMENT: {os.getenv('RAILWAY_ENVIRONMENT')}")
+            
+            self.logger.info("=== END ETHEREUM DIAGNOSTICS ===")
             
             # Инициализируем price tracker
             self.price_tracker = PriceTracker(self.database)
