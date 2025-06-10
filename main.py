@@ -512,6 +512,10 @@ def get_ethereum_rpc_url() -> Optional[str]:
     if rpc_url:
         return rpc_url
     
+    # Временный фикс для Railway - используем hardcoded URL если в Railway
+    if os.getenv('RAILWAY_ENVIRONMENT'):
+        return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
+    
     # Для локальной разработки используем предоставленный Alchemy URL
     if not os.getenv('RAILWAY_ENVIRONMENT'):
         return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
