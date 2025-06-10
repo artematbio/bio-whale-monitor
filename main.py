@@ -21,6 +21,8 @@ from config.dao_config import print_monitoring_summary
 from database.database import DAOTreasuryDatabase
 from monitors.solana_monitor import SolanaMonitor
 from monitors.price_tracker import PriceTracker
+# Добавляем Ethereum мониторинг
+from monitors.ethereum_monitor import EthereumMonitor
 from notifications.notification_system import NotificationSystem, init_notification_system
 from health_check import get_health_server
 
@@ -88,6 +90,7 @@ class DAOTreasuryMonitorApp:
         self.logger = logging.getLogger(self.__class__.__name__)
         self.database = None
         self.solana_monitor = None
+        self.ethereum_monitor = None  # Добавляем Ethereum мониторинг
         self.price_tracker = None
         self.notification_system = None
         self.health_server = None
@@ -99,6 +102,7 @@ class DAOTreasuryMonitorApp:
         
         # API ключи
         self.helius_api_key = get_helius_api_key()
+        self.ethereum_rpc_url = get_ethereum_rpc_url()  # Добавляем Ethereum RPC
     
     def _signal_handler(self, signum, frame):
         """Обработчик сигналов для завершения работы"""
@@ -134,6 +138,13 @@ class DAOTreasuryMonitorApp:
             else:
                 self.logger.warning("Helius API key not found - Solana monitoring disabled")
             
+            # Инициализируем Ethereum мониторинг
+            if self.ethereum_rpc_url:
+                self.ethereum_monitor = EthereumMonitor(self.ethereum_rpc_url, self.database)
+                self.logger.info("Ethereum monitor initialized")
+            else:
+                self.logger.warning("Ethereum RPC URL not found - Ethereum monitoring disabled")
+            
             # Инициализируем price tracker
             self.price_tracker = PriceTracker(self.database)
             self.logger.info("Price tracker initialized")
@@ -151,8 +162,13 @@ class DAOTreasuryMonitorApp:
         start_time = time.time()
         
         try:
+            # Запускаем Solana мониторинг
             if self.solana_monitor:
                 await self.solana_monitor.run_monitoring_cycle()
+            
+            # Запускаем Ethereum мониторинг
+            if self.ethereum_monitor:
+                await self.ethereum_monitor.monitor_treasury_addresses()
             
             # Обновляем время активности для health check
             if self.health_server:
@@ -180,7 +196,7 @@ class DAOTreasuryMonitorApp:
             self.logger.info(f"Health check server will start on port {port}")
         
         # Основной мониторинг транзакций
-        if self.solana_monitor:
+        if self.solana_monitor or self.ethereum_monitor:
             tasks.append(asyncio.create_task(self._run_transaction_monitoring()))
         
         # Price tracking
@@ -255,6 +271,12 @@ class DAOTreasuryMonitorApp:
                 self.logger.info("Solana monitor test: OK")
             else:
                 self.logger.warning("Solana monitor not available")
+            
+            # Тестируем Ethereum мониторинг
+            if self.ethereum_monitor:
+                self.logger.info("Ethereum monitor test: OK")
+            else:
+                self.logger.warning("Ethereum monitor not available")
             
             # Тестируем health check
             if self.health_server:
@@ -361,7 +383,7 @@ class DAOTreasuryMonitorApp:
         # Состояние мониторов
         print(f"\nMonitor Status:")
         print(f"  Solana Monitor: {'✓ Active' if self.solana_monitor else '✗ Disabled'}")
-        print(f"  Ethereum Monitor: ✗ Not implemented (Stage 2)")
+        print(f"  Ethereum Monitor: {'✓ Active' if self.ethereum_monitor else '✗ Disabled'}")
         print(f"  Health Check Server: {'✓ Available' if self.health_server else '✗ Disabled'}")
         
         # Переменные окружения
@@ -454,6 +476,20 @@ def get_helius_api_key() -> Optional[str]:
     
     # Используем ключ по умолчанию из конфигурации
     return 'd4af7b72-f199-4d77-91a9-11d8512c5e42'
+
+def get_ethereum_rpc_url() -> Optional[str]:
+    """Получение Ethereum RPC URL"""
+    # Пытаемся получить из переменной окружения
+    rpc_url = os.getenv('ETHEREUM_RPC_URL')
+    if rpc_url:
+        return rpc_url
+    
+    # Если в Railway, возвращаем None (требует настройки)
+    if os.getenv('RAILWAY_ENVIRONMENT'):
+        return None
+    
+    # Для локальной разработки используем предоставленный Alchemy URL
+    return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
 
 def main():
     """Основная функция"""
