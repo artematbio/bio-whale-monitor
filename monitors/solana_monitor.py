@@ -402,31 +402,41 @@ class SolanaMonitor:
         try:
             await self.start_session()
             
+            # Логируем информацию о мониторинге
+            logger.info(f"🏛️ Monitoring {len(SOLANA_DAOS)} Solana DAOs:")
+            for i, dao in enumerate(SOLANA_DAOS, 1):
+                logger.info(f"   {i}. {dao.name}: {dao.treasury_address}")
+            
             # Мониторим каждый DAO
             for dao in SOLANA_DAOS:
                 try:
+                    logger.info(f"🔍 Scanning {dao.name} treasury...")
                     transfers = await self.monitor_treasury_address(dao.treasury_address)
                     
                     if transfers:
                         await self.save_transfers_to_database(transfers, dao.name)
                         total_transfers += len(transfers)
-                        logger.info(f"Found {len(transfers)} new transfers for {dao.name}")
+                        logger.info(f"   📝 Found {len(transfers)} new transfers for {dao.name}")
+                    else:
+                        logger.info(f"   ✅ No new transfers for {dao.name}")
                     
                     # Небольшая задержка между запросами
                     await asyncio.sleep(1)
                     
                 except Exception as e:
-                    logger.error(f"Error monitoring DAO {dao.name}: {e}")
+                    logger.error(f"❌ Error monitoring DAO {dao.name}: {e}")
                     continue
             
         except Exception as e:
-            logger.error(f"Error in monitoring cycle: {e}")
+            logger.error(f"❌ Error in Solana monitoring cycle: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
         
         finally:
             await self.close_session()
         
         duration = time.time() - start_time
-        logger.info(f"Monitoring cycle completed in {duration:.2f}s - {total_transfers} transfers processed")
+        logger.info(f"✅ Solana monitoring cycle completed in {duration:.2f}s - {total_transfers} transfers processed")
     
     async def start_monitoring(self):
         """Запуск непрерывного мониторинга"""

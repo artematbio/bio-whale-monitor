@@ -103,27 +103,49 @@ class EthereumMonitor:
             
             # Получаем последний блок
             latest_block_number = self.w3.eth.block_number
+            logger.info(f"📊 Latest Ethereum block: {latest_block_number}")
             
             # Устанавливаем начальный блок если не установлен
             if self.last_processed_block is None:
                 self.last_processed_block = latest_block_number - self.blocks_to_check
+                logger.info(f"🔄 First run - starting from block {self.last_processed_block}")
+            
+            # Вычисляем блоки для обработки
+            blocks_to_process = list(range(self.last_processed_block + 1, latest_block_number + 1))
+            if blocks_to_process:
+                logger.info(f"🔍 Processing {len(blocks_to_process)} new blocks: {blocks_to_process[0]} to {blocks_to_process[-1]}")
+            else:
+                logger.info("✅ No new blocks to process")
             
             # Проверяем новые блоки
             transfers_found = 0
-            for block_num in range(self.last_processed_block + 1, latest_block_number + 1):
+            for block_num in blocks_to_process:
+                logger.info(f"   🔍 Scanning block {block_num}...")
                 block_transfers = await self.process_block(block_num)
                 transfers_found += len(block_transfers)
                 
                 if block_transfers:
+                    logger.info(f"   📝 Found {len(block_transfers)} transfers in block {block_num}")
                     await self.save_transfers_to_database(block_transfers)
+                else:
+                    logger.debug(f"   ✅ No relevant transfers in block {block_num}")
+            
+            # Логируем treasury адреса которые мониторим
+            logger.info(f"🏛️ Monitoring {len(self.treasury_addresses)} treasury addresses:")
+            for i, addr in enumerate(self.treasury_addresses, 1):
+                dao_config = get_dao_by_treasury_address(addr)
+                dao_name = dao_config.name if dao_config else "Unknown"
+                logger.info(f"   {i}. {dao_name}: {addr}")
             
             self.last_processed_block = latest_block_number
             
             processing_time = time.time() - start_time
-            logger.info(f"Monitoring cycle completed in {processing_time:.2f}s - {transfers_found} transfers processed")
+            logger.info(f"✅ Ethereum monitoring cycle completed in {processing_time:.2f}s - {transfers_found} transfers processed")
             
         except Exception as e:
-            logger.error(f"Error in Ethereum monitoring cycle: {e}")
+            logger.error(f"❌ Error in Ethereum monitoring cycle: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
         finally:
             await self.close_session()
     

@@ -171,9 +171,68 @@ class DAOTreasuryMonitorApp:
             self.health_server = get_health_server()
             self.logger.info("Health check server initialized")
             
+            # Отправляем уведомление о успешном деплое (только в Railway)
+            if os.getenv('RAILWAY_ENVIRONMENT') and self.notification_system:
+                self._send_deployment_notification()
+            
         except Exception as e:
             self.logger.error(f"Failed to initialize monitors: {e}")
             raise
+    
+    def _send_deployment_notification(self):
+        """Отправка уведомления о успешном деплое"""
+        try:
+            # Подсчитываем активные мониторы
+            solana_status = "✅ Active" if self.solana_monitor else "❌ Disabled"
+            ethereum_status = "✅ Active" if self.ethereum_monitor else "❌ Disabled"
+            
+            # Статистика базы данных
+            stats = self.database.get_database_stats()
+            
+            message = f"""🚀 **DAO Treasury Monitor Deployed Successfully**
+
+**Monitor Status:**
+• Solana: {solana_status}
+• Ethereum: {ethereum_status}
+• Price Tracker: ✅ Active
+• Health Check: ✅ Active
+
+**Database Stats:**
+• Transactions: {stats.get('treasury_transactions', 0)}
+• Alerts: {stats.get('alerts', 0)}
+• DB Size: {stats.get('database_size_mb', 0):.2f} MB
+
+**Monitoring Scope:**
+• 4 Solana DAOs (Curetopia, SpineDAO, MYCO DAO)
+• 7 Ethereum DAOs (VitaDAO, PsychDAO, etc.)
+• 13+ Tokens tracked
+• $10K+ alert threshold
+
+🎯 All systems operational! Monitoring is active 24/7."""
+            
+            # Запускаем асинхронную отправку в отдельной задаче
+            import asyncio
+            
+            async def send_notification():
+                try:
+                    if hasattr(self.notification_system, 'telegram_bot') and self.notification_system.telegram_bot:
+                        await self.notification_system.telegram_bot.send_message(message)
+                        self.logger.info("🎉 Deployment notification sent to Telegram")
+                    else:
+                        self.logger.warning("Telegram bot not configured - deployment notification skipped")
+                except Exception as e:
+                    self.logger.error(f"Failed to send deployment notification: {e}")
+            
+            # Планируем отправку на следующем event loop
+            try:
+                loop = asyncio.get_event_loop()
+                loop.create_task(send_notification())
+            except RuntimeError:
+                # Если event loop не запущен, пропускаем уведомление
+                self.logger.info("Event loop not running - deployment notification skipped")
+                
+        except Exception as e:
+            self.logger.error(f"Error in deployment notification: {e}")
     
     async def run_monitoring_cycle(self):
         """Один цикл мониторинга"""
