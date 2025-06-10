@@ -138,12 +138,19 @@ class DAOTreasuryMonitorApp:
             else:
                 self.logger.warning("Helius API key not found - Solana monitoring disabled")
             
-            # Инициализируем Ethereum мониторинг
+            # Инициализируем Ethereum мониторинг с диагностикой
+            self.logger.info(f"Checking Ethereum RPC URL: {self.ethereum_rpc_url}")
             if self.ethereum_rpc_url:
-                self.ethereum_monitor = EthereumMonitor(self.ethereum_rpc_url, self.database)
-                self.logger.info("Ethereum monitor initialized")
+                try:
+                    self.ethereum_monitor = EthereumMonitor(self.ethereum_rpc_url, self.database)
+                    self.logger.info("✅ Ethereum monitor initialized successfully")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to initialize Ethereum monitor: {e}")
+                    self.ethereum_monitor = None
             else:
-                self.logger.warning("Ethereum RPC URL not found - Ethereum monitoring disabled")
+                self.logger.warning("❌ Ethereum RPC URL not found - Ethereum monitoring disabled")
+                self.logger.info(f"   ETHEREUM_RPC_URL env var: {os.getenv('ETHEREUM_RPC_URL')}")
+                self.logger.info(f"   RAILWAY_ENVIRONMENT: {os.getenv('RAILWAY_ENVIRONMENT')}")
             
             # Инициализируем price tracker
             self.price_tracker = PriceTracker(self.database)
@@ -484,12 +491,12 @@ def get_ethereum_rpc_url() -> Optional[str]:
     if rpc_url:
         return rpc_url
     
-    # Если в Railway, возвращаем None (требует настройки)
-    if os.getenv('RAILWAY_ENVIRONMENT'):
-        return None
-    
     # Для локальной разработки используем предоставленный Alchemy URL
-    return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
+    if not os.getenv('RAILWAY_ENVIRONMENT'):
+        return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
+    
+    # В Railway без ETHEREUM_RPC_URL возвращаем None
+    return None
 
 def main():
     """Основная функция"""
