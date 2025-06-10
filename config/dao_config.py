@@ -107,6 +107,16 @@ QUANTUM_BIO_DAO = DAOConfig(
     bio_pool_address="0x921285db9e2565f9c937e3a5243270aa0002c71a42630a893687023a1a24f62b"
 )
 
+ATHENA_DAO = DAOConfig(
+    name="Athena DAO",
+    token_symbol="ATH",
+    token_address="0xA4fFdf3208F46898CE063e25c1C43056FA754739",
+    treasury_address="0x4D754910d570B30F9a0150EEb7281cB3ce0cF42f",
+    deployer_address="0x4D754910d570B30F9a0150EEb7281cB3ce0cF42f",  # Using treasury as deployer since not specified
+    blockchain="ethereum",
+    eth_pool_address="0x8071df1889d60a1c6329ef79976fb1f2e50599af"
+)
+
 # === SOLANA DAOs (BIO Protocol ecosystem) ===
 
 CURETOPIA_DAO = DAOConfig(
@@ -167,6 +177,7 @@ ALL_DAOS = [
     CRYO_DAO,
     PSY_DAO,
     QUANTUM_BIO_DAO,
+    ATHENA_DAO,
     CURETOPIA_DAO,
     SPINE_DAO,
     MYCO_DAO_1,
