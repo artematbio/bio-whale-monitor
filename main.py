@@ -23,6 +23,8 @@ from monitors.solana_monitor import SolanaMonitor
 from monitors.price_tracker import PriceTracker
 # Добавляем Ethereum мониторинг
 from monitors.ethereum_monitor import EthereumMonitor
+# Добавляем Pool мониторинг
+from monitors.pool_monitor import PoolMonitor
 from notifications.notification_system import NotificationSystem, init_notification_system
 from health_check import get_health_server
 
@@ -91,6 +93,7 @@ class DAOTreasuryMonitorApp:
         self.database = None
         self.solana_monitor = None
         self.ethereum_monitor = None  # Добавляем Ethereum мониторинг
+        self.pool_monitor = None      # Добавляем Pool мониторинг
         self.price_tracker = None
         self.notification_system = None
         self.health_server = None
@@ -167,6 +170,10 @@ class DAOTreasuryMonitorApp:
             self.price_tracker = PriceTracker(self.database)
             self.logger.info("Price tracker initialized")
             
+            # Инициализируем pool monitor
+            self.pool_monitor = PoolMonitor(self.database)
+            self.logger.info("Pool monitor initialized")
+            
             # Инициализируем health check server для Railway
             self.health_server = get_health_server()
             self.logger.info("Health check server initialized")
@@ -189,7 +196,8 @@ class DAOTreasuryMonitorApp:
             
             # Подсчитываем активные мониторы
             solana_status = "✅ Active" if self.solana_monitor else "❌ Disabled"
-            ethereum_status = "✅ Active" if self.ethereum_monitor else "❌ Disabled"
+            ethernet_status = "✅ Active" if self.ethereum_monitor else "❌ Disabled"
+            pool_status = "✅ Active" if self.pool_monitor else "❌ Disabled"
             
             # Статистика базы данных
             stats = self.database.get_database_stats()
@@ -198,7 +206,8 @@ class DAOTreasuryMonitorApp:
 
 **Monitor Status:**
 • Solana: {solana_status}
-• Ethereum: {ethereum_status}
+• Ethereum: {ethernet_status}
+• Pool Monitor: {pool_status}
 • Price Tracker: ✅ Active
 • Health Check: ✅ Active
 
@@ -209,8 +218,9 @@ class DAOTreasuryMonitorApp:
 
 **Monitoring Scope:**
 • 4 Solana DAOs (Curetopia, SpineDAO, MYCO DAO)
-• 7 Ethereum DAOs (VitaDAO, PsychDAO, etc.)
-• 13+ Tokens tracked
+• 8 Ethereum DAOs (VitaDAO, PsychDAO, Athena DAO)
+• 20 Pool addresses tracked
+• 13+ Tokens monitored
 • $10K+ alert threshold
 
 🎯 All systems operational! Monitoring is active 24/7."""
@@ -238,7 +248,8 @@ class DAOTreasuryMonitorApp:
         try:
             # Подсчитываем активные мониторы
             solana_status = "✅ Active" if self.solana_monitor else "❌ Disabled"
-            ethereum_status = "✅ Active" if self.ethereum_monitor else "❌ Disabled"
+            ethernet_status = "✅ Active" if self.ethereum_monitor else "❌ Disabled"
+            pool_status = "✅ Active" if self.pool_monitor else "❌ Disabled"
             
             # Статистика базы данных
             stats = self.database.get_database_stats()
@@ -247,7 +258,8 @@ class DAOTreasuryMonitorApp:
 
 **Monitor Status:**
 • Solana: {solana_status}
-• Ethereum: {ethereum_status}
+• Ethereum: {ethernet_status}
+• Pool Monitor: {pool_status}
 • Price Tracker: ✅ Active
 • Health Check: ✅ Active
 
@@ -258,8 +270,9 @@ class DAOTreasuryMonitorApp:
 
 **Monitoring Scope:**
 • 4 Solana DAOs (Curetopia, SpineDAO, MYCO DAO)
-• 7 Ethereum DAOs (VitaDAO, PsychDAO, etc.)
-• 13+ Tokens tracked
+• 8 Ethereum DAOs (VitaDAO, PsychDAO, Athena DAO)
+• 20 Pool addresses tracked
+• 13+ Tokens monitored
 • $10K+ alert threshold
 
 🎯 All systems operational! Monitoring is active 24/7."""
@@ -308,6 +321,13 @@ class DAOTreasuryMonitorApp:
                 await self.ethereum_monitor.monitor_treasury_addresses()
             else:
                 self.logger.warning("Ethereum monitor not available")
+            
+            # Запускаем Pool мониторинг
+            if self.pool_monitor:
+                self.logger.info("Running Pool monitoring...")
+                await self.pool_monitor.run_pool_monitoring_cycle()
+            else:
+                self.logger.warning("Pool monitor not available")
             
             # Обновляем время активности для health check
             if self.health_server:
