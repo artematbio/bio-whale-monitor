@@ -21,6 +21,15 @@ from config.dao_config import print_monitoring_summary
 from database.database import DAOTreasuryDatabase
 from monitors.solana_monitor import SolanaMonitor
 from monitors.price_tracker import PriceTracker
+from notifications.notification_system import NotificationSystem, init_notification_system
+from health_check import get_health_server
+
+# Добавляем PostgreSQL поддержку для Railway
+try:
+    from database.postgresql_database import PostgreSQLDatabase
+    POSTGRESQL_AVAILABLE = True
+except ImportError:
+    POSTGRESQL_AVAILABLE = False
 
 # Настройка логирования
 def setup_logging(log_level: str = 'INFO', log_file: Optional[str] = None):
@@ -58,6 +67,19 @@ def setup_logging(log_level: str = 'INFO', log_file: Optional[str] = None):
     logging.getLogger('aiohttp').setLevel(logging.WARNING)
     logging.getLogger('urllib3').setLevel(logging.WARNING)
 
+def get_database():
+    """Получение экземпляра базы данных (SQLite или PostgreSQL)"""
+    
+    # Проверяем переменную окружения для Railway
+    database_url = os.getenv('DATABASE_URL')
+    
+    if database_url and POSTGRESQL_AVAILABLE:
+        logging.info("Using PostgreSQL database for Railway deployment")
+        return PostgreSQLDatabase(database_url)
+    else:
+        logging.info("Using SQLite database for local development")
+        return DAOTreasuryDatabase()
+
 class DAOTreasuryMonitorApp:
     """Основное приложение DAO Treasury Monitor"""
     
@@ -67,6 +89,8 @@ class DAOTreasuryMonitorApp:
         self.database = None
         self.solana_monitor = None
         self.price_tracker = None
+        self.notification_system = None
+        self.health_server = None
         self.running = False
         
         # Обработчики сигналов для graceful shutdown
@@ -84,8 +108,9 @@ class DAOTreasuryMonitorApp:
     def initialize_database(self):
         """Инициализация базы данных"""
         try:
-            self.database = DAOTreasuryDatabase()
-            self.logger.info(f"Database initialized: {self.database.db_path}")
+            self.database = get_database()
+            database_type = "PostgreSQL" if hasattr(self.database, 'connection_pool') else "SQLite"
+            self.logger.info(f"Database initialized: {database_type}")
             
             # Показываем статистику базы данных
             stats = self.database.get_database_stats()
@@ -98,6 +123,10 @@ class DAOTreasuryMonitorApp:
     def initialize_monitors(self):
         """Инициализация мониторов"""
         try:
+            # Инициализируем систему уведомлений
+            self.notification_system = init_notification_system(self.database)
+            self.logger.info("Notification system initialized")
+            
             # Инициализируем Solana мониторинг
             if self.helius_api_key:
                 self.solana_monitor = SolanaMonitor(self.helius_api_key, self.database)
@@ -108,6 +137,10 @@ class DAOTreasuryMonitorApp:
             # Инициализируем price tracker
             self.price_tracker = PriceTracker(self.database)
             self.logger.info("Price tracker initialized")
+            
+            # Инициализируем health check server для Railway
+            self.health_server = get_health_server()
+            self.logger.info("Health check server initialized")
             
         except Exception as e:
             self.logger.error(f"Failed to initialize monitors: {e}")
@@ -121,6 +154,10 @@ class DAOTreasuryMonitorApp:
             if self.solana_monitor:
                 await self.solana_monitor.run_monitoring_cycle()
             
+            # Обновляем время активности для health check
+            if self.health_server:
+                self.health_server.update_activity_time()
+            
             duration = time.time() - start_time
             self.logger.info(f"Monitoring cycle completed in {duration:.2f}s")
             
@@ -128,12 +165,19 @@ class DAOTreasuryMonitorApp:
             self.logger.error(f"Error in monitoring cycle: {e}")
     
     async def start_monitoring(self):
-        """Запуск основного мониторинга с price tracking"""
+        """Запуск основного мониторинга с price tracking и health check"""
         self.logger.info("Starting DAO Treasury Monitor")
         self.running = True
         
         # Создаем задачи для параллельного выполнения
         tasks = []
+        
+        # Health check server (для Railway)
+        if self.health_server and os.getenv('PORT'):
+            port = int(os.getenv('PORT', 8080))
+            self.health_server.port = port
+            tasks.append(asyncio.create_task(self.health_server.start_server()))
+            self.logger.info(f"Health check server will start on port {port}")
         
         # Основной мониторинг транзакций
         if self.solana_monitor:
@@ -194,7 +238,8 @@ class DAOTreasuryMonitorApp:
         try:
             # Тестируем подключение к базе данных
             stats = self.database.get_database_stats()
-            self.logger.info(f"Database test successful: {stats}")
+            database_type = "PostgreSQL" if hasattr(self.database, 'connection_pool') else "SQLite"
+            self.logger.info(f"Database test successful ({database_type}): {stats}")
             
             # Тестируем получение цен токенов
             from utils.price_utils import get_bio_token_price, format_price
@@ -211,6 +256,10 @@ class DAOTreasuryMonitorApp:
             else:
                 self.logger.warning("Solana monitor not available")
             
+            # Тестируем health check
+            if self.health_server:
+                self.logger.info("Health check server: OK")
+            
             self.logger.info("Test mode completed successfully")
             return True
             
@@ -218,46 +267,75 @@ class DAOTreasuryMonitorApp:
             self.logger.error(f"Test mode failed: {e}")
             return False
     
-    def run_test_alerts_mode(self):
-        """Запуск тестирования алертов"""
-        self.logger.info("Running alert testing mode")
+    async def run_test_alerts_mode(self):
+        """Запуск тестирования алертов с Telegram уведомлениями"""
+        self.logger.info("Running alert testing mode with Telegram notifications")
         
         try:
-            # Импортируем тестировщик алертов
-            from test_alerts import AlertTester
-            
-            # Создаем тестировщик
-            tester = AlertTester()
-            
-            # Запускаем тесты
-            self.logger.info("Starting alert tests...")
-            
-            # Тест падения цены
-            success1 = tester.test_price_drop_alert()
-            self.logger.info(f"Price drop test: {'PASS' if success1 else 'FAIL'}")
-            
-            # Тест роста цены
-            success2 = tester.test_price_spike_alert()
-            self.logger.info(f"Price spike test: {'PASS' if success2 else 'FAIL'}")
-            
-            # Тест множественных временных рамок
-            success3 = tester.test_multiple_timeframes()
-            self.logger.info(f"Multiple timeframes test: {'PASS' if success3 else 'FAIL'}")
-            
-            # Показываем результаты
-            total_alerts = tester.show_test_results()
-            
-            # Итоговый результат
-            passed_tests = sum([success1, success2, success3])
-            self.logger.info(f"Alert testing completed: {passed_tests}/3 tests passed, {total_alerts} alerts generated")
-            
-            if total_alerts > 0:
-                self.logger.info("✅ Alert system is working correctly!")
-                return True
+            # Тестируем систему уведомлений
+            if self.notification_system:
+                self.logger.info("Testing notification system...")
+                
+                # Тест подключения к Telegram
+                telegram_results = await self.notification_system.test_notifications()
+                self.logger.info(f"Telegram test results: {telegram_results}")
+                
+                # Создаем тестовые алерты для отправки в Telegram
+                
+                # 1. Тестовый алерт транзакции
+                test_transaction = {
+                    'dao_name': 'VitaDAO',
+                    'amount_usd': 15000.50,
+                    'tx_hash': '4x8Zn2kP9rF5tM3qW7yE1L6sB8vC9dH0jN4oQ2aR7uY3mK5xG1',
+                    'timestamp': datetime.now(),
+                    'blockchain': 'solana',
+                    'token_symbol': 'VITA',
+                    'amount': 1500000.0,
+                    'tx_type': 'outgoing',
+                    'from_address': 'GTuVLSN4cKvrWnWFbyyQX6VW14SLhfu7sjM4MrzFoj3s',
+                    'to_address': '9WzDXwBbmkg8ZTbNMqUxvQRAyrZzDsGYdLVL9zYtAWWM'
+                }
+                
+                success1 = await self.notification_system.send_transaction_alert(test_transaction)
+                self.logger.info(f"Transaction alert sent to Telegram: {'✅ SUCCESS' if success1 else '❌ FAILED'}")
+                
+                # 2. Тестовый ценовой алерт
+                test_price_alert = {
+                    'alert_type': 'price_drop',
+                    'dao_name': 'VitaDAO',
+                    'token_symbol': 'VITA',
+                    'title': 'Price Drop Alert - VITA',
+                    'message': 'VITA price dropped 8.5% in 1h',
+                    'change_percentage': -8.5,
+                    'period_hours': 1,
+                    'blockchain': 'ethereum',
+                    'token_address': '0x81f8f0bb1cB2A06649E51913A151F0E7Ef6FA321',
+                    'timestamp': datetime.now()
+                }
+                
+                success2 = await self.notification_system.send_price_alert(test_price_alert)
+                self.logger.info(f"Price alert sent to Telegram: {'✅ SUCCESS' if success2 else '❌ FAILED'}")
+                
+                # 3. Тест ежедневной сводки
+                success3 = await self.notification_system.send_daily_summary()
+                self.logger.info(f"Daily summary sent to Telegram: {'✅ SUCCESS' if success3 else '❌ FAILED'}")
+                
+                # Результаты
+                passed_tests = sum([success1, success2, success3])
+                total_tests = 3
+                
+                self.logger.info(f"Telegram alert testing completed: {passed_tests}/{total_tests} tests passed")
+                
+                if passed_tests > 0:
+                    self.logger.info("🎉 Telegram notifications are working!")
+                    return True
+                else:
+                    self.logger.warning("❌ No Telegram notifications were sent")
+                    return False
             else:
-                self.logger.warning("❌ No alerts generated - check configuration")
+                self.logger.error("Notification system not initialized")
                 return False
-            
+                
         except Exception as e:
             self.logger.error(f"Alert test mode failed: {e}")
             return False
@@ -272,7 +350,8 @@ class DAOTreasuryMonitorApp:
         # Статистика базы данных
         if self.database:
             stats = self.database.get_database_stats()
-            print(f"\nDatabase Statistics:")
+            database_type = "PostgreSQL" if hasattr(self.database, 'connection_pool') else "SQLite"
+            print(f"\nDatabase ({database_type}) Statistics:")
             print(f"  Treasury transactions: {stats.get('treasury_transactions', 0)}")
             print(f"  Pool activities: {stats.get('pool_activities', 0)}")
             print(f"  Balance snapshots: {stats.get('balance_snapshots', 0)}")
@@ -283,11 +362,16 @@ class DAOTreasuryMonitorApp:
         print(f"\nMonitor Status:")
         print(f"  Solana Monitor: {'✓ Active' if self.solana_monitor else '✗ Disabled'}")
         print(f"  Ethereum Monitor: ✗ Not implemented (Stage 2)")
+        print(f"  Health Check Server: {'✓ Available' if self.health_server else '✗ Disabled'}")
         
         # Переменные окружения
         print(f"\nEnvironment Variables:")
         print(f"  HELIUS_API_KEY: {'✓ Set' if os.getenv('HELIUS_API_KEY') else '✗ Not set'}")
         print(f"  COINGECKO_API_KEY: {'✓ Set' if os.getenv('COINGECKO_API_KEY') else '✓ Using default'}")
+        print(f"  TELEGRAM_BOT_TOKEN: {'✓ Set' if os.getenv('TELEGRAM_BOT_TOKEN') else '✗ Not set'}")
+        print(f"  TELEGRAM_CHAT_ID: {'✓ Set' if os.getenv('TELEGRAM_CHAT_ID') else '✗ Not set'}")
+        print(f"  DATABASE_URL: {'✓ Set (PostgreSQL)' if os.getenv('DATABASE_URL') else '✗ Not set (using SQLite)'}")
+        print(f"  PORT: {'✓ Set' if os.getenv('PORT') else '✗ Not set'}")
 
     def finalize_shutdown(self):
         """Финализация остановки приложения"""
@@ -304,8 +388,8 @@ class DAOTreasuryMonitorApp:
         
         # Закрытие базы данных
         if self.database:
-            # SQLite автоматически закрывается при завершении приложения
-            pass
+            if hasattr(self.database, 'close'):
+                self.database.close()
         
         self.logger.info("Shutdown completed")
     
@@ -330,7 +414,7 @@ class DAOTreasuryMonitorApp:
                     raise Exception("Test mode failed")
                     
             elif mode == 'test-alerts':
-                success = self.run_test_alerts_mode()
+                success = await self.run_test_alerts_mode()
                 if not success:
                     raise Exception("Alert test mode failed")
                     

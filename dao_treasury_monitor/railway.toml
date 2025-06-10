@@ -1,0 +1,16 @@
+[build]
+builder = "nixpacks"
+
+[deploy]
+healthcheckPath = "/health"
+healthcheckTimeout = 300
+restartPolicyType = "always"
+
+[env]
+LOG_LEVEL = "INFO"
+MONITORING_INTERVAL_SECONDS = "30"
+ALERT_THRESHOLD_USD = "10000"
+PYTHONUNBUFFERED = "1"
+
+[variables]
+PORT = { description = "Port for health check server", default = "8080" } 
