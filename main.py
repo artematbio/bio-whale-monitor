@@ -171,13 +171,67 @@ class DAOTreasuryMonitorApp:
             self.health_server = get_health_server()
             self.logger.info("Health check server initialized")
             
-            # Отправляем уведомление о успешном деплое (только в Railway)
-            if os.getenv('RAILWAY_ENVIRONMENT') and self.notification_system:
-                self._send_deployment_notification()
-            
         except Exception as e:
             self.logger.error(f"Failed to initialize monitors: {e}")
             raise
+    
+    async def _send_deployment_notification_async(self):
+        """Асинхронная отправка уведомления о успешном деплое"""
+        try:
+            self.logger.info("🚀 Preparing deployment notification...")
+            self.logger.info(f"Railway environment: {os.getenv('RAILWAY_ENVIRONMENT')}")
+            self.logger.info(f"Notification system available: {self.notification_system is not None}")
+            
+            if self.notification_system:
+                self.logger.info(f"Telegram bot available: {hasattr(self.notification_system, 'telegram_bot')}")
+                if hasattr(self.notification_system, 'telegram_bot'):
+                    self.logger.info(f"Telegram bot enabled: {self.notification_system.telegram_bot.enabled if self.notification_system.telegram_bot else False}")
+            
+            # Подсчитываем активные мониторы
+            solana_status = "✅ Active" if self.solana_monitor else "❌ Disabled"
+            ethereum_status = "✅ Active" if self.ethereum_monitor else "❌ Disabled"
+            
+            # Статистика базы данных
+            stats = self.database.get_database_stats()
+            
+            message = f"""🚀 **DAO Treasury Monitor Deployed Successfully**
+
+**Monitor Status:**
+• Solana: {solana_status}
+• Ethereum: {ethereum_status}
+• Price Tracker: ✅ Active
+• Health Check: ✅ Active
+
+**Database Stats:**
+• Transactions: {stats.get('treasury_transactions', 0)}
+• Alerts: {stats.get('alerts', 0)}
+• DB Size: {stats.get('database_size_mb', 0):.2f} MB
+
+**Monitoring Scope:**
+• 4 Solana DAOs (Curetopia, SpineDAO, MYCO DAO)
+• 7 Ethereum DAOs (VitaDAO, PsychDAO, etc.)
+• 13+ Tokens tracked
+• $10K+ alert threshold
+
+🎯 All systems operational! Monitoring is active 24/7."""
+            
+            self.logger.info("📝 Deployment message formatted, attempting to send...")
+            
+            # Отправляем уведомление
+            if hasattr(self.notification_system, 'telegram_bot') and self.notification_system.telegram_bot:
+                self.logger.info("📨 Calling telegram_bot.send_message()...")
+                success = await self.notification_system.telegram_bot.send_message(message)
+                if success:
+                    self.logger.info("🎉 Deployment notification sent to Telegram successfully")
+                else:
+                    self.logger.warning("❌ Failed to send deployment notification to Telegram - send_message returned False")
+            else:
+                self.logger.warning("❌ Telegram bot not configured - deployment notification skipped")
+                
+        except Exception as e:
+            self.logger.error(f"❌ Error sending deployment notification: {e}")
+            import traceback
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
     
     def _send_deployment_notification(self):
         """Отправка уведомления о успешном деплое"""
@@ -271,6 +325,10 @@ class DAOTreasuryMonitorApp:
         """Запуск основного мониторинга с price tracking и health check"""
         self.logger.info("Starting DAO Treasury Monitor")
         self.running = True
+        
+        # Отправляем уведомление о деплое в Railway
+        if os.getenv('RAILWAY_ENVIRONMENT') and self.notification_system:
+            await self._send_deployment_notification_async()
         
         # Создаем задачи для параллельного выполнения
         tasks = []

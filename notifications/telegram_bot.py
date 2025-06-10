@@ -334,6 +334,30 @@ class TelegramNotifier:
             logger.error(f"Error sending test message: {e}")
             return False
 
+    async def send_message(self, message: str, parse_mode: str = 'Markdown') -> bool:
+        """Отправляет произвольное сообщение в Telegram"""
+        if not self.enabled:
+            logger.warning("Telegram notifications not enabled")
+            return False
+        
+        try:
+            await self.bot.send_message(
+                chat_id=self.chat_id,
+                text=message,
+                parse_mode=parse_mode,
+                disable_web_page_preview=True
+            )
+            
+            logger.info("Message sent to Telegram successfully")
+            return True
+            
+        except TelegramError as e:
+            logger.error(f"Telegram API error: {e}")
+            return False
+        except Exception as e:
+            logger.error(f"Error sending message to Telegram: {e}")
+            return False
+
 # Фабричная функция для создания уведомителя
 def create_telegram_notifier(bot_token: Optional[str] = None, chat_id: Optional[str] = None) -> TelegramNotifier:
     """Создает экземпляр Telegram уведомителя"""
