@@ -187,14 +187,16 @@ class PoolMonitor:
             # Критерии значимости:
             # 1. Транзакция > $10K
             # 2. Продажа DAO или BIO токена любого размера
-            # 3. Add/Remove liquidity > $10K
+            # 3. Add/Remove liquidity > $10K (включая эвристические оценки)
             
             is_significant = False
+            is_estimated_value = activity.metadata and activity.metadata.get('estimated_value', False)
             
             # Крупная транзакция
             if activity.total_usd_value >= self.alert_threshold:
                 is_significant = True
-                logger.info(f"🚨 Large transaction: ${activity.total_usd_value} in {activity.dao_name} pool")
+                value_type = "estimated" if is_estimated_value else "actual"
+                logger.info(f"🚨 Large transaction: ${activity.total_usd_value} ({value_type}) in {activity.dao_name} pool")
             
             # Продажа DAO или BIO токена
             if activity.dao_token_sold or activity.bio_token_sold:
@@ -202,15 +204,30 @@ class PoolMonitor:
                 token_type = "DAO" if activity.dao_token_sold else "BIO"
                 logger.info(f"📉 {token_type} token sale: ${activity.total_usd_value} in {activity.dao_name} pool")
             
-            # Add/Remove liquidity
-            if activity.activity_type in ['add_liquidity', 'remove_liquidity'] and activity.total_usd_value >= self.alert_threshold:
-                is_significant = True
-                logger.info(f"💧 Large liquidity operation: {activity.activity_type} ${activity.total_usd_value}")
+            # Add/Remove liquidity операции
+            if activity.activity_type in ['add_liquidity', 'remove_liquidity']:
+                # Для liquidity операций учитываем эвристические оценки
+                if activity.total_usd_value >= self.alert_threshold or is_estimated_value:
+                    is_significant = True
+                    value_info = f"${activity.total_usd_value} (estimated)" if is_estimated_value else f"${activity.total_usd_value}"
+                    logger.info(f"💧 Large liquidity operation: {activity.activity_type} {value_info} in {activity.dao_name}")
+            
+            # Специальная логика для Raydium и Uniswap операций с DAO/BIO токенами
+            if activity.metadata:
+                dao_involved = activity.metadata.get('dao_token_involved', False)
+                bio_involved = activity.metadata.get('bio_token_involved', False)
+                
+                if (dao_involved or bio_involved) and activity.activity_type in ['add_liquidity', 'remove_liquidity']:
+                    is_significant = True
+                    token_type = "DAO" if dao_involved else "BIO"
+                    blockchain = activity.blockchain.title()
+                    logger.info(f"🔗 {token_type} token liquidity operation: {activity.activity_type} on {blockchain} ({activity.dao_name})")
             
             if is_significant:
                 significant.append(activity)
-                # Обновляем дневную статистику продаж
-                self.update_daily_sales_cache(activity)
+                # Обновляем дневную статистику продаж (только для swap операций, не для liquidity)
+                if activity.activity_type in ['swap_sell', 'swap_buy']:
+                    self.update_daily_sales_cache(activity)
         
         return significant
     
@@ -313,35 +330,227 @@ class PoolMonitor:
         return activities
     
     async def monitor_ethereum_pools(self) -> List[PoolActivityInfo]:
-        """Мониторинг Ethereum пулов"""
+        """Мониторинг Ethereum пулов через Web3"""
         activities = []
         
         try:
             logger.info(f"🔍 Monitoring {len(self.ethereum_pools)} Ethereum pools")
             
-            # TODO: Реализовать мониторинг Ethereum пулов через Web3
-            # Пока оставляем заглушку
+            # Получаем Ethereum RPC URL
+            ethereum_rpc_url = self._get_ethereum_rpc_url()
+            if not ethereum_rpc_url:
+                logger.warning("Ethereum RPC URL not configured, skipping Ethereum pools")
+                return activities
+            
+            # Импортируем Web3 для Ethereum мониторинга
+            try:
+                from web3 import Web3
+                from web3.exceptions import Web3Exception
+            except ImportError:
+                logger.error("web3 library not installed, skipping Ethereum pools")
+                return activities
+            
+            # Подключаемся к Ethereum
+            w3 = Web3(Web3.HTTPProvider(ethereum_rpc_url))
+            if not w3.is_connected():
+                logger.error("Failed to connect to Ethereum RPC")
+                return activities
+            
+            # Получаем текущий блок и блок час назад
+            current_block = w3.eth.block_number
+            blocks_per_hour = 300  # Приблизительно 12 секунд на блок
+            from_block = max(0, current_block - blocks_per_hour)
+            
+            logger.debug(f"Scanning Ethereum blocks {from_block} to {current_block}")
+            
+            # Мониторим каждый пул
+            for pool_info in self.ethereum_pools:
+                pool_activities = await self.fetch_ethereum_pool_events(
+                    w3, 
+                    pool_info['address'], 
+                    pool_info['dao_name'],
+                    pool_info['dao_token_address'],
+                    from_block,
+                    current_block
+                )
+                activities.extend(pool_activities)
+            
+            logger.info(f"📈 Found {len(activities)} Ethereum pool activities")
             
         except Exception as e:
             logger.error(f"Error monitoring Ethereum pools: {e}")
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
         
         return activities
     
+    def _get_ethereum_rpc_url(self) -> Optional[str]:
+        """Получение Ethereum RPC URL"""
+        import os
+        rpc_url = os.getenv('ETHEREUM_RPC_URL')
+        if rpc_url:
+            return rpc_url
+        
+        # Временный фикс для Railway - используем hardcoded URL если в Railway
+        if os.getenv('RAILWAY_ENVIRONMENT'):
+            return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
+        
+        # Для локальной разработки используем предоставленный Alchemy URL
+        return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
+    
+    async def fetch_ethereum_pool_events(self, w3, pool_address: str, dao_name: str, dao_token_address: str, from_block: int, to_block: int) -> List[PoolActivityInfo]:
+        """Получение Mint/Burn событий из Ethereum пула"""
+        activities = []
+        
+        try:
+            # Uniswap V2 события
+            mint_topic = "0x4c209b5fc8ad50758f13e2e1088ba56a560dff690a1c6fef26394f4c03821c4f"  # Mint(address,uint256,uint256)
+            burn_topic = "0xdccd412f0b1252819cb1fd330b93224ca42612892bb3f4f789976e6d81936496"  # Burn(address,uint256,uint256,address)
+            
+            # Uniswap V3 события
+            mint_v3_topic = "0x7a53080ba414158be7ec69b987b5fb7d07dee101fe85488f0853ae16239d0bde"  # Mint(address,address,int24,int24,uint128,uint256,uint256)
+            burn_v3_topic = "0x0c396cd989a39f4459b5fa1aed6a9a8dcdbc45908acfd67e028cd568da98982c"  # Burn(address,int24,int24,uint128,uint256,uint256)
+            
+            # Получаем все события Mint и Burn
+            all_events = []
+            
+            try:
+                # Uniswap V2 Mint события
+                mint_events = w3.eth.get_logs({
+                    'address': Web3.to_checksum_address(pool_address),
+                    'topics': [mint_topic],
+                    'fromBlock': from_block,
+                    'toBlock': to_block
+                })
+                all_events.extend([(event, 'add_liquidity', 'v2') for event in mint_events])
+                
+                # Uniswap V2 Burn события
+                burn_events = w3.eth.get_logs({
+                    'address': Web3.to_checksum_address(pool_address),
+                    'topics': [burn_topic],
+                    'fromBlock': from_block,
+                    'toBlock': to_block
+                })
+                all_events.extend([(event, 'remove_liquidity', 'v2') for event in burn_events])
+                
+                # Uniswap V3 Mint события
+                mint_v3_events = w3.eth.get_logs({
+                    'address': Web3.to_checksum_address(pool_address),
+                    'topics': [mint_v3_topic],
+                    'fromBlock': from_block,
+                    'toBlock': to_block
+                })
+                all_events.extend([(event, 'add_liquidity', 'v3') for event in mint_v3_events])
+                
+                # Uniswap V3 Burn события
+                burn_v3_events = w3.eth.get_logs({
+                    'address': Web3.to_checksum_address(pool_address),
+                    'topics': [burn_v3_topic],
+                    'fromBlock': from_block,
+                    'toBlock': to_block
+                })
+                all_events.extend([(event, 'remove_liquidity', 'v3') for event in burn_v3_events])
+                
+            except Exception as e:
+                logger.debug(f"Error fetching events for pool {pool_address}: {e}")
+                return activities
+            
+            # Парсим события
+            for event_log, activity_type, uniswap_version in all_events:
+                activity = await self.parse_ethereum_liquidity_event(
+                    w3, event_log, activity_type, uniswap_version, 
+                    pool_address, dao_name, dao_token_address
+                )
+                if activity:
+                    activities.append(activity)
+            
+            logger.debug(f"Found {len(all_events)} liquidity events for Ethereum pool {pool_address}")
+            
+        except Exception as e:
+            logger.error(f"Error fetching Ethereum pool events for {pool_address}: {e}")
+        
+        return activities
+    
+    async def parse_ethereum_liquidity_event(self, w3, event_log, activity_type: str, uniswap_version: str, pool_address: str, dao_name: str, dao_token_address: str) -> Optional[PoolActivityInfo]:
+        """Парсинг Ethereum liquidity события"""
+        try:
+            # Получаем информацию о транзакции
+            tx_hash = event_log['transactionHash'].hex()
+            block_info = w3.eth.get_block(event_log['blockNumber'])
+            timestamp = datetime.fromtimestamp(block_info['timestamp'])
+            
+            # Для точной оценки стоимости нужно декодировать event data
+            # Пока используем эвристическую оценку
+            total_usd_value = Decimal('0')
+            
+            # Проверяем есть ли DAO или BIO токен в этом пуле
+            dao_token_involved = False
+            bio_token_involved = False
+            
+            # Если пул связан с DAO, то считаем что DAO токен задействован
+            dao_token_involved = any(dao.token_address == dao_token_address for dao in ALL_DAOS)
+            bio_token_involved = dao_token_address in self.bio_token_addresses
+            
+            if dao_token_involved or bio_token_involved:
+                # Для пулов с DAO/BIO токенами, оценочная стоимость операции
+                total_usd_value = Decimal('8000')  # Эвристическая оценка для Ethereum
+            
+            # Получаем токены пула из кэша цен или используем заглушки
+            token0_symbol = ""
+            token1_symbol = ""
+            
+            if dao_token_address in self.dao_token_addresses:
+                token0_symbol = self.dao_token_addresses[dao_token_address]
+            if dao_token_address in self.bio_token_addresses:
+                token1_symbol = self.bio_token_addresses[dao_token_address]
+            
+            activity = PoolActivityInfo(
+                tx_hash=tx_hash,
+                timestamp=timestamp,
+                dao_name=dao_name,
+                blockchain="ethereum",
+                pool_address=pool_address,
+                activity_type=activity_type,
+                token0_address=dao_token_address,
+                token1_address="",  # Требует декодирования event data
+                token0_symbol=token0_symbol,
+                token1_symbol=token1_symbol,
+                token0_amount=Decimal('0'),  # Требует декодирования event data
+                token1_amount=Decimal('0'),
+                total_usd_value=total_usd_value,
+                dao_token_sold=False,  # Liquidity операции не являются продажами
+                bio_token_sold=False,
+                metadata={
+                    "uniswap_version": uniswap_version,
+                    "event_type": activity_type,
+                    "dao_token_involved": dao_token_involved,
+                    "bio_token_involved": bio_token_involved,
+                    "estimated_value": True,  # Флаг что стоимость оценочная
+                    "block_number": event_log['blockNumber']
+                }
+            )
+            
+            return activity
+            
+        except Exception as e:
+            logger.error(f"Error parsing Ethereum liquidity event: {e}")
+            return None
+    
     async def fetch_solana_pool_trades(self, pool_address: str, dao_name: str, dao_token_address: str) -> List[PoolActivityInfo]:
-        """Получение торгов Solana пула за последний час"""
+        """Получение торгов и liquidity операций Solana пула за последний час"""
         activities = []
         
         try:
             # Время начала (последний час)
             time_since = (datetime.now() - timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M:%SZ")
             
-            # Простой GraphQL запрос для получения торгов
+            # Упрощенный GraphQL запрос только для торгов (убираем Instructions пока что)
             query = """
-            query poolTrades($poolAddress: String, $since: DateTime!) {
-              Solana(network: solana, dataset: archive) {
+            query poolActivities($since: DateTime!) {
+              Solana(network: solana, dataset: realtime) {
+                # Получаем торги (swaps)
                 DEXTrades(
                   where: {
-                    Trade: {Dex: {PoolAddress: {is: $poolAddress}}},
                     Block: {Time: {since: $since}}
                   }
                   orderBy: {descending: Block_Time}
@@ -370,6 +579,9 @@ class PoolMonitor:
                       }
                       AmountInUSD
                     }
+                    Dex {
+                      ProtocolName
+                    }
                   }
                 }
               }
@@ -380,7 +592,7 @@ class PoolMonitor:
                 logger.debug(f"BitQuery API key not configured, skipping pool {pool_address}")
                 return activities
             
-            variables = {"poolAddress": pool_address, "since": time_since}
+            variables = {"since": time_since}
             headers = {
                 "Content-Type": "application/json",
                 "Authorization": f"Bearer {self.bitquery_api_key}"
@@ -397,15 +609,59 @@ class PoolMonitor:
                 return activities
             
             data = response.json()
-            trades = data.get("data", {}).get("Solana", {}).get("DEXTrades", [])
             
+            # Отладочный вывод для проверки структуры ответа
+            if logger.isEnabledFor(logging.DEBUG):
+                logger.debug(f"BitQuery response for pool {pool_address}: {json.dumps(data, indent=2)[:500]}...")
+            
+            solana_data = data.get("data", {})
+            if solana_data is None:
+                logger.debug(f"No data returned from BitQuery for pool {pool_address}")
+                return activities
+            
+            solana_data = solana_data.get("Solana", {})
+            if solana_data is None:
+                logger.debug(f"No Solana data returned from BitQuery for pool {pool_address}")
+                return activities
+            
+            # Парсим торги
+            trades = solana_data.get("DEXTrades", [])
+            if trades is None:
+                logger.debug(f"No trades data returned for pool {pool_address}")
+                trades = []
+                
             for trade in trades:
-                activity = self.parse_solana_trade(trade, pool_address, dao_name, dao_token_address)
-                if activity:
-                    activities.append(activity)
+                # Предварительная фильтрация - проверяем есть ли наши токены в торге
+                trade_data = trade.get("Trade", {})
+                buy_data = trade_data.get("Buy", {})
+                sell_data = trade_data.get("Sell", {})
+                
+                buy_token = buy_data.get("Currency", {}).get("MintAddress", "")
+                sell_token = sell_data.get("Currency", {}).get("MintAddress", "")
+                buy_symbol = buy_data.get("Currency", {}).get("Symbol", "")
+                sell_symbol = sell_data.get("Currency", {}).get("Symbol", "")
+                
+                # Проверяем что торг связан с нашими токенами
+                has_our_token = (
+                    dao_token_address in [buy_token, sell_token] or
+                    buy_token in self.dao_token_addresses or
+                    sell_token in self.dao_token_addresses or
+                    buy_token in self.bio_token_addresses or
+                    sell_token in self.bio_token_addresses or
+                    'BIO' in [buy_symbol, sell_symbol] or
+                    dao_name.upper() in buy_symbol.upper() or
+                    dao_name.upper() in sell_symbol.upper()
+                )
+                
+                if has_our_token:
+                    activity = self.parse_solana_trade(trade, pool_address, dao_name, dao_token_address)
+                    if activity:
+                        activities.append(activity)
+            
+            logger.debug(f"Found {len(trades)} trades for pool {pool_address}")
             
         except Exception as e:
-            logger.error(f"Error fetching Solana pool trades for {pool_address}: {e}")
+            logger.error(f"Error fetching Solana pool activities for {pool_address}: {e}")
         
         return activities
     
@@ -544,19 +800,56 @@ class PoolMonitor:
             alert_type = "DAO Token Sale"
         elif activity.bio_token_sold:
             alert_type = "BIO Token Sale"
+        elif activity.activity_type == "add_liquidity":
+            alert_type = "Add Liquidity"
+        elif activity.activity_type == "remove_liquidity":
+            alert_type = "Remove Liquidity"
         elif activity.total_usd_value >= self.alert_threshold:
             alert_type = "Large Transaction"
+        else:
+            alert_type = "Pool Activity"
         
-        return (
-            f"{alert_type} detected!\n"
-            f"DAO: {activity.dao_name}\n"
-            f"Pool: {activity.pool_address}\n"
-            f"Type: {activity.activity_type}\n"
-            f"Tokens: {activity.token0_symbol} → {activity.token1_symbol}\n"
-            f"Value: ${activity.total_usd_value:,.2f}\n"
-            f"Tx: {activity.tx_hash}\n"
+        # Определяем дополнительную информацию
+        blockchain_info = activity.blockchain.title()
+        is_estimated = activity.metadata and activity.metadata.get('estimated_value', False)
+        value_suffix = " (estimated)" if is_estimated else ""
+        
+        # Специальная информация для разных типов операций
+        operation_info = ""
+        if activity.activity_type in ["add_liquidity", "remove_liquidity"]:
+            if activity.metadata:
+                if activity.metadata.get('uniswap_version'):
+                    operation_info = f"Uniswap {activity.metadata['uniswap_version'].upper()}"
+                elif activity.metadata.get('program_name'):
+                    operation_info = activity.metadata['program_name']
+        
+        token_info = ""
+        if activity.token0_symbol and activity.token1_symbol:
+            token_info = f"Tokens: {activity.token0_symbol} ↔ {activity.token1_symbol}"
+        elif activity.token0_symbol:
+            token_info = f"Token: {activity.token0_symbol}"
+        
+        alert_parts = [
+            f"{alert_type} detected!",
+            f"DAO: {activity.dao_name}",
+            f"Blockchain: {blockchain_info}",
+            f"Pool: {activity.pool_address[:10]}...{activity.pool_address[-8:]}",
+            f"Operation: {activity.activity_type.replace('_', ' ').title()}"
+        ]
+        
+        if operation_info:
+            alert_parts.append(f"Protocol: {operation_info}")
+        
+        if token_info:
+            alert_parts.append(token_info)
+        
+        alert_parts.extend([
+            f"Value: ${activity.total_usd_value:,.2f}{value_suffix}",
+            f"Tx: {activity.tx_hash}",
             f"Time: {activity.timestamp.strftime('%Y-%m-%d %H:%M:%S')}"
-        )
+        ])
+        
+        return "\n".join(alert_parts)
     
     def format_daily_alert(self, daily_alert: Dict[str, Any]) -> str:
         """Форматирование алерта для дневных лимитов"""
