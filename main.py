@@ -183,9 +183,9 @@ class DAOTreasuryMonitorApp:
             self.logger.info(f"Notification system available: {self.notification_system is not None}")
             
             if self.notification_system:
-                self.logger.info(f"Telegram bot available: {hasattr(self.notification_system, 'telegram_bot')}")
-                if hasattr(self.notification_system, 'telegram_bot'):
-                    self.logger.info(f"Telegram bot enabled: {self.notification_system.telegram_bot.enabled if self.notification_system.telegram_bot else False}")
+                self.logger.info(f"Telegram bot available: {hasattr(self.notification_system, 'telegram')}")
+                if hasattr(self.notification_system, 'telegram'):
+                    self.logger.info(f"Telegram bot enabled: {self.notification_system.telegram.enabled if self.notification_system.telegram else False}")
             
             # Подсчитываем активные мониторы
             solana_status = "✅ Active" if self.solana_monitor else "❌ Disabled"
@@ -218,9 +218,9 @@ class DAOTreasuryMonitorApp:
             self.logger.info("📝 Deployment message formatted, attempting to send...")
             
             # Отправляем уведомление
-            if hasattr(self.notification_system, 'telegram_bot') and self.notification_system.telegram_bot:
-                self.logger.info("📨 Calling telegram_bot.send_message()...")
-                success = await self.notification_system.telegram_bot.send_message(message)
+            if hasattr(self.notification_system, 'telegram') and self.notification_system.telegram:
+                self.logger.info("📨 Calling telegram.send_message()...")
+                success = await self.notification_system.telegram.send_message(message)
                 if success:
                     self.logger.info("🎉 Deployment notification sent to Telegram successfully")
                 else:
@@ -269,8 +269,8 @@ class DAOTreasuryMonitorApp:
             
             async def send_notification():
                 try:
-                    if hasattr(self.notification_system, 'telegram_bot') and self.notification_system.telegram_bot:
-                        await self.notification_system.telegram_bot.send_message(message)
+                    if hasattr(self.notification_system, 'telegram') and self.notification_system.telegram:
+                        await self.notification_system.telegram.send_message(message)
                         self.logger.info("🎉 Deployment notification sent to Telegram")
                     else:
                         self.logger.warning("Telegram bot not configured - deployment notification skipped")
