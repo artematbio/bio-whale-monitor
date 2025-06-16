@@ -389,34 +389,44 @@ class DAOTreasuryMonitorApp:
     
     async def _run_transaction_monitoring(self):
         """Запуск мониторинга транзакций"""
-        self.logger.info("Starting transaction monitoring")
+        self.logger.info("🔍 Starting transaction monitoring thread")
         
         while self.running:
             try:
+                self.logger.info("🏛️ Running transaction monitoring cycle...")
                 await self.run_monitoring_cycle()
+                self.logger.info("✅ Transaction monitoring cycle completed")
                 
                 # Ожидание между циклами
-                self.logger.debug("Waiting 30 seconds until next cycle")
+                self.logger.info("⏰ Waiting 30 seconds until next transaction cycle")
                 await asyncio.sleep(30)
                 
             except Exception as e:
-                self.logger.error(f"Error in transaction monitoring: {e}")
+                self.logger.error(f"❌ Error in transaction monitoring: {e}")
+                import traceback
+                self.logger.error(f"Transaction monitoring traceback: {traceback.format_exc()}")
+                self.logger.info("🔄 Retrying transaction monitoring in 60 seconds...")
                 await asyncio.sleep(60)
     
     async def _run_price_tracking(self):
         """Запуск price tracking"""
-        self.logger.info("Starting price tracking")
+        self.logger.info("🎯 Starting price tracking thread")
         
         while self.running:
             try:
+                self.logger.info("💰 Running price tracking cycle...")
                 await self.price_tracker.run_price_tracking_cycle()
+                self.logger.info("✅ Price tracking cycle completed successfully")
                 
                 # Ожидание между циклами price tracking (5 минут)
-                self.logger.debug("Waiting 5 minutes until next price check")
+                self.logger.info("⏰ Waiting 5 minutes until next price check")
                 await asyncio.sleep(300)
                 
             except Exception as e:
-                self.logger.error(f"Error in price tracking: {e}")
+                self.logger.error(f"❌ Error in price tracking: {e}")
+                import traceback
+                self.logger.error(f"Price tracking traceback: {traceback.format_exc()}")
+                self.logger.info("🔄 Retrying price tracking in 60 seconds...")
                 await asyncio.sleep(60)
     
     def run_test_mode(self):
