@@ -40,9 +40,10 @@ class EthereumTransactionInfo:
 class EthereumMonitor:
     """Мониторинг Ethereum treasury транзакций"""
     
-    def __init__(self, rpc_url: str, database: DAOTreasuryDatabase):
+    def __init__(self, rpc_url: str, database: DAOTreasuryDatabase, notification_system=None):
         self.rpc_url = rpc_url
         self.database = database
+        self.notification_system = notification_system  # Добавляем систему уведомлений
         self.session = None
         self.http_client = None
         
@@ -364,6 +365,13 @@ class EthereumMonitor:
                     # Логируем алерт если превышен порог
                     if transfer.amount_usd >= self.alert_threshold:
                         logger.warning(f"🚨 ALERT: Large transaction detected! {dao_name} - ${transfer.amount_usd:,.2f}")
+                        
+                        # Отправляем уведомление в Telegram
+                        if self.notification_system:
+                            try:
+                                await self.notification_system.send_transaction_alert(tx_data)
+                            except Exception as e:
+                                logger.error(f"Failed to send Telegram alert: {e}")
                 
             except Exception as e:
                 logger.error(f"Error saving transfer {transfer.tx_hash}: {e}")

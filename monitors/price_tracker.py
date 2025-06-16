@@ -21,14 +21,15 @@ logger = logging.getLogger(__name__)
 class PriceTracker:
     """Класс для отслеживания изменений цен токенов"""
     
-    def __init__(self, database: DAOTreasuryDatabase):
+    def __init__(self, database: DAOTreasuryDatabase, notification_system=None):
         self.database = database
+        self.notification_system = notification_system  # Добавляем систему уведомлений
         self.http_client = None
         
         # Настройки трекинга
         self.price_check_interval = 300  # 5 минут между проверками
         self.price_drop_threshold = 5.0  # 5% падение для алерта
-        self.price_spike_threshold = 15.0  # 15% рост для алерта
+        self.price_spike_threshold = 10.0  # 10% рост для алерта
         self.comparison_periods = [1, 4, 24]  # 1, 4 и 24 часа для сравнения
         
         # Токены для мониторинга
@@ -227,6 +228,13 @@ class PriceTracker:
                     if success:
                         total_alerts += 1
                         logger.warning(f"PRICE ALERT: {alert['message']}")
+                        
+                        # Отправляем уведомления в Telegram через notification_system
+                        if self.notification_system:
+                            try:
+                                await self.notification_system.send_price_alert(alert)
+                            except Exception as e:
+                                logger.error(f"Failed to send Telegram alert: {e}")
                 
             except Exception as e:
                 logger.error(f"Error processing alerts for {token_address}: {e}")

@@ -14,6 +14,13 @@ from datetime import datetime
 from typing import Optional, Dict, Any
 import argparse
 
+# Загружаем переменные окружения из .env файла
+try:
+    from dotenv import load_dotenv
+    load_dotenv()
+except ImportError:
+    pass
+
 # Добавляем текущую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -136,7 +143,7 @@ class DAOTreasuryMonitorApp:
             
             # Инициализируем Solana мониторинг
             if self.helius_api_key:
-                self.solana_monitor = SolanaMonitor(self.helius_api_key, self.database)
+                self.solana_monitor = SolanaMonitor(self.helius_api_key, self.database, self.notification_system)
                 self.logger.info("Solana monitor initialized")
             else:
                 self.logger.warning("Helius API key not found - Solana monitoring disabled")
@@ -152,7 +159,7 @@ class DAOTreasuryMonitorApp:
             self.logger.info(f"Checking Ethereum RPC URL: {self.ethereum_rpc_url}")
             if self.ethereum_rpc_url:
                 try:
-                    self.ethereum_monitor = EthereumMonitor(self.ethereum_rpc_url, self.database)
+                    self.ethereum_monitor = EthereumMonitor(self.ethereum_rpc_url, self.database, self.notification_system)
                     self.logger.info("✅ Ethereum monitor initialized successfully")
                 except Exception as e:
                     self.logger.error(f"❌ Failed to initialize Ethereum monitor: {e}")
@@ -167,7 +174,7 @@ class DAOTreasuryMonitorApp:
             self.logger.info("=== END ETHEREUM DIAGNOSTICS ===")
             
             # Инициализируем price tracker
-            self.price_tracker = PriceTracker(self.database)
+            self.price_tracker = PriceTracker(self.database, self.notification_system)
             self.logger.info("Price tracker initialized")
             
             # Инициализируем pool monitor

@@ -37,15 +37,16 @@ class SolanaTransactionInfo:
 class SolanaMonitor:
     """Мониторинг Solana treasury транзакций"""
     
-    def __init__(self, api_key: str, database: DAOTreasuryDatabase):
+    def __init__(self, api_key: str, database: DAOTreasuryDatabase, notification_system=None):
         self.api_key = api_key
         self.base_url = "https://mainnet.helius-rpc.com"
         self.database = database
+        self.notification_system = notification_system
         self.session = None
         self.http_client = None
         
         # Настройки мониторинга
-        self.check_interval = 30  # Проверка каждые 30 секунд
+        self.check_interval = 60  # Проверка каждую минуту
         self.batch_size = 1000   # Максимум транзакций за запрос
         self.alert_threshold = Decimal("10000")  # $10,000 порог алерта
         
@@ -383,11 +384,26 @@ class SolanaMonitor:
                         'message': f'{transfer.tx_type.title()} transfer of {transfer.amount:,.2f} {tx_data["token_symbol"]} (${transfer.amount_usd:,.2f})',
                         'tx_hash': transfer.signature,
                         'amount_usd': transfer.amount_usd,
-                        'timestamp': transfer.timestamp
+                        'timestamp': transfer.timestamp,
+                        'metadata': {
+                            'blockchain': 'solana',
+                            'token_symbol': tx_data["token_symbol"],
+                            'token_amount': transfer.amount,
+                            'tx_type': transfer.tx_type,
+                            'from_address': transfer.from_address,
+                            'to_address': transfer.to_address
+                        }
                     }
                     
                     self.database.save_alert(alert_data)
                     logger.warning(f"ALERT: Large transaction detected - {dao_name} - ${transfer.amount_usd:,.2f}")
+                    
+                    # Отправляем уведомление в Telegram
+                    if self.notification_system:
+                        try:
+                            await self.notification_system.send_transaction_alert(tx_data)
+                        except Exception as e:
+                            logger.error(f"Failed to send Telegram alert: {e}")
                 
             except Exception as e:
                 logger.error(f"Error saving transfer to database: {e}")
