@@ -299,7 +299,13 @@ def show_tables_info(database):
     
     for table_name, column_count in tables:
         # Получаем количество записей
-        count_query = f"SELECT COUNT(*) FROM {table_name}"
+        if hasattr(database, 'connection_pool'):
+            # PostgreSQL - используем безопасный запрос
+            count_query = f"SELECT COUNT(*) FROM \"{table_name}\""
+        else:
+            # SQLite
+            count_query = f"SELECT COUNT(*) FROM {table_name}"
+        
         result = execute_query(database, count_query, fetch_all=False)
         record_count = result[0] if result else 0
         
