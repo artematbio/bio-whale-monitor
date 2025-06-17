@@ -279,12 +279,15 @@ class SolanaMonitor:
         try:
             # Проверяем, была ли транзакция уже обработана
             if self.database.is_transaction_processed(signature):
-                logger.debug(f"Transaction {signature} already processed, skipping")
+                logger.debug(f"✅ Transaction {signature[:20]}... already processed, skipping")
                 return []
+            else:
+                logger.info(f"🔄 Processing new transaction: {signature[:20]}...")
             
             # Получаем детали транзакции
             tx_data = await self.get_transaction_details(signature)
             if not tx_data:
+                logger.warning(f"❌ Could not get transaction details for {signature[:20]}...")
                 return []
             
             # Парсим трансферы
@@ -376,7 +379,10 @@ class SolanaMonitor:
                 
                 if success and tx_data['alert_triggered']:
                     # Проверяем, не был ли уже отправлен алерт для этой транзакции
-                    if not self.database.is_alert_sent_for_transaction(transfer.signature):
+                    alert_already_sent = self.database.is_alert_sent_for_transaction(transfer.signature)
+                    if not alert_already_sent:
+                        logger.warning(f"🚨 NEW LARGE TRANSACTION ALERT: {transfer.signature[:20]}... - {dao_name} - ${transfer.amount_usd:,.2f}")
+                        
                         # Создаем алерт для крупных транзакций
                         alert_data = {
                             'alert_type': 'large_transaction',
@@ -407,7 +413,7 @@ class SolanaMonitor:
                             except Exception as e:
                                 logger.error(f"Failed to send Telegram alert: {e}")
                     else:
-                        logger.debug(f"Alert already sent for transaction: {transfer.signature}")
+                        logger.info(f"⏭️ Alert already sent for transaction: {transfer.signature[:20]}... - skipping Telegram notification")
                 
             except Exception as e:
                 logger.error(f"Error saving transfer to database: {e}")
