@@ -7,7 +7,7 @@ Telegram Bot для DAO Treasury Monitor
 import os
 import logging
 import asyncio
-from datetime import datetime
+from datetime import datetime, timezone, timedelta
 from typing import Dict, Any, List, Optional
 from decimal import Decimal
 
@@ -140,37 +140,40 @@ class TelegramNotifier:
                 emoji = '📊'
                 color = '🟡'
             
-            message = f"{color} {emoji} **Price Alert - {token_symbol}**\n\n"
-            message += f"🏛️ **DAO:** {dao_name}\n"
+            message = f"{color} {emoji} Price Alert - {token_symbol}\n\n"
+            message += f"🏛️ DAO: {dao_name}\n"
             
-            # Информация об изменении цены
+            # Получаем блокчейн из metadata
             metadata = alert_data.get('metadata', {})
             if isinstance(metadata, dict):
-                change_percentage = metadata.get('change_percentage', 0)
-                period_hours = metadata.get('period_hours', 0)
-                
-                if change_percentage != 0:
-                    sign = '+' if change_percentage > 0 else ''
-                    message += f"📊 **Change:** {sign}{change_percentage:.2f}%\n"
-                    message += f"⏱️ **Period:** {period_hours}h\n"
-                
                 blockchain = metadata.get('blockchain', '')
                 if blockchain:
-                    message += f"⛓️ **Chain:** {blockchain.title()}\n"
+                    message += f"⛓️ Chain: {blockchain}\n"
             
-            # Время
+            # Время в московской зоне
             timestamp = alert_data.get('timestamp')
             if timestamp:
                 if isinstance(timestamp, str):
                     timestamp = datetime.fromisoformat(timestamp.replace('Z', '+00:00'))
                 elif isinstance(timestamp, datetime):
                     pass
-                message += f"⏰ **Time:** {timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
+                
+                # Проверяем есть ли московское время в metadata
+                moscow_time_str = metadata.get('moscow_time') if isinstance(metadata, dict) else None
+                if moscow_time_str:
+                    message += f"⏰ Time: {moscow_time_str} UTC+3\n"
+                else:
+                    # Конвертируем в московское время
+                    moscow_tz = timezone(timedelta(hours=3))
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=timezone.utc)
+                    moscow_time = timestamp.astimezone(moscow_tz)
+                    message += f"⏰ Time: {moscow_time.strftime('%Y-%m-%d %H:%M:%S')} UTC+3\n"
             
-            # Описание
+            # Описание (здесь уже содержится информация о ценах)
             description = alert_data.get('message', '')
             if description:
-                message += f"\n📝 **Details:** {description}"
+                message += f"\n📝 Details: {description}"
             
             return message
             

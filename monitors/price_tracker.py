@@ -7,7 +7,7 @@ Price Tracker для DAO Treasury Monitor
 import asyncio
 import logging
 import time
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from typing import List, Dict, Any, Optional
 from decimal import Decimal
 import httpx
@@ -18,29 +18,30 @@ from utils.price_utils import get_multiple_token_prices, get_token_price_coingec
 
 logger = logging.getLogger(__name__)
 
+# Московское время (UTC+3)
+MOSCOW_TZ = timezone(timedelta(hours=3))
+
 class PriceTracker:
     """Класс для отслеживания изменений цен токенов"""
     
     def __init__(self, database: DAOTreasuryDatabase, notification_system=None):
         self.database = database
-        self.notification_system = notification_system  # Добавляем систему уведомлений
+        self.notification_system = notification_system
         self.http_client = None
         
         # Настройки трекинга
         self.price_check_interval = 300  # 5 минут между проверками
-        self.price_drop_threshold = 5.0  # 5% падение для алерта
-        self.price_spike_threshold = 10.0  # 10% рост для алерта
-        self.comparison_periods = [1, 4, 24]  # 1, 4 и 24 часа для сравнения
+        self.minimum_alert_threshold = 5.0  # Минимальное изменение для алерта (5%)
         
-        # Пороговые уровни для уведомлений (каждые 5%)
+        # Пороговые уровни для уведомлений (каждые 5% падения от последней цены алерта)
         self.alert_thresholds = [-5, -10, -15, -20, -25, -30, -40, -50, -60, -70, -80, -90]
         
-        # Кэш последних алертов для предотвращения спама
-        # Структура: {token_address: {period: {threshold: timestamp}}}
-        self.last_alerts_cache = {}
+        # Кэш последних цен для каждого токена при которых были отправлены алерты
+        # Структура: {token_address: {threshold: {'price': float, 'timestamp': datetime}}}
+        self.last_alert_prices = {}
         
-        # Минимальный интервал между одинаковыми алертами (1 час)
-        self.alert_cooldown = 3600  # секунды
+        # Минимальный интервал между алертами одного типа (30 минут)
+        self.alert_cooldown = 1800  # секунды
         
         # Токены для мониторинга
         self.tokens_to_track = self._get_tokens_list()
@@ -85,71 +86,90 @@ class PriceTracker:
         
         return tokens
     
-    def _should_send_alert(self, token_address: str, period_hours: int, threshold: int) -> bool:
-        """Проверяет, нужно ли отправлять алерт (анти-спам)"""
+    def _get_blockchain_display_name(self, blockchain: str) -> str:
+        """Получает красивое название блокчейна"""
+        blockchain_names = {
+            'ethereum': 'Ethereum',
+            'solana': 'Solana',
+            'polygon': 'Polygon',
+            'arbitrum': 'Arbitrum',
+            'optimism': 'Optimism'
+        }
+        return blockchain_names.get(blockchain.lower(), blockchain.title())
+    
+    def _should_send_alert(self, token_address: str, current_price: float, threshold: int) -> tuple[bool, float]:
+        """
+        Проверяет, нужно ли отправлять алерт для данного порога
+        Возвращает (should_send, reference_price)
+        """
         now = datetime.now()
         
-        # Создаем ключи для кэша
-        if token_address not in self.last_alerts_cache:
-            self.last_alerts_cache[token_address] = {}
+        # Инициализируем кэш для токена если нужно
+        if token_address not in self.last_alert_prices:
+            self.last_alert_prices[token_address] = {}
         
-        if period_hours not in self.last_alerts_cache[token_address]:
-            self.last_alerts_cache[token_address][period_hours] = {}
+        # Проверяем есть ли запись для этого порога
+        if threshold not in self.last_alert_prices[token_address]:
+            # Первый алерт для этого порога - используем текущую цену как базовую
+            # Но нужно найти максимальную цену из всех более высоких порогов
+            reference_price = current_price
+            
+            # Ищем цену для менее негативного порога (например, для -10% берем цену -5%)
+            for higher_threshold in sorted([t for t in self.alert_thresholds if t > threshold], reverse=True):
+                if higher_threshold in self.last_alert_prices[token_address]:
+                    reference_price = self.last_alert_prices[token_address][higher_threshold]['price']
+                    break
+            
+            # Если это первый порог (-5%), берем максимальную цену за последние 24 часа
+            if threshold == -5:
+                try:
+                    recent_prices = self.database.get_token_price_history(token_address, 24)
+                    if recent_prices:
+                        max_price = max(float(p.get('price_usd', 0)) for p in recent_prices)
+                        if max_price > current_price:
+                            reference_price = max_price
+                except Exception as e:
+                    logger.debug(f"Could not get price history for {token_address}: {e}")
+            
+            return True, reference_price
         
-        # Проверяем последний алерт для этого порога
-        last_alert_time = self.last_alerts_cache[token_address][period_hours].get(threshold)
+        # Проверяем время последнего алерта (кулдаун)
+        last_alert_info = self.last_alert_prices[token_address][threshold]
+        time_since_last = (now - last_alert_info['timestamp']).total_seconds()
         
-        if last_alert_time is None:
-            return True  # Первый алерт для этого порога
+        if time_since_last < self.alert_cooldown:
+            return False, last_alert_info['price']
         
-        # Проверяем прошло ли достаточно времени
-        time_since_last = (now - last_alert_time).total_seconds()
-        return time_since_last >= self.alert_cooldown
+        # Проверяем достиг ли порог относительно последней цены алерта
+        reference_price = last_alert_info['price']
+        price_change_percent = ((current_price - reference_price) / reference_price * 100)
+        
+        # Алерт нужен если цена упала еще на 5% от последней цены алерта
+        return price_change_percent <= -5, reference_price
     
-    def _mark_alert_sent(self, token_address: str, period_hours: int, threshold: int):
+    def _mark_alert_sent(self, token_address: str, threshold: int, price: float):
         """Отмечает что алерт был отправлен"""
-        if token_address not in self.last_alerts_cache:
-            self.last_alerts_cache[token_address] = {}
+        if token_address not in self.last_alert_prices:
+            self.last_alert_prices[token_address] = {}
         
-        if period_hours not in self.last_alerts_cache[token_address]:
-            self.last_alerts_cache[token_address][period_hours] = {}
-        
-        self.last_alerts_cache[token_address][period_hours][threshold] = datetime.now()
+        self.last_alert_prices[token_address][threshold] = {
+            'price': price,
+            'timestamp': datetime.now()
+        }
     
-    def _get_threshold_for_change(self, change_percentage: float) -> Optional[int]:
-        """Определяет пороговый уровень для данного изменения цены"""
+    def _get_threshold_for_current_drop(self, current_price: float, reference_price: float) -> Optional[int]:
+        """Определяет пороговый уровень для текущего падения цены"""
+        if reference_price <= 0:
+            return None
+        
+        change_percentage = ((current_price - reference_price) / reference_price * 100)
+        
+        # Находим подходящий порог
         for threshold in sorted(self.alert_thresholds):
             if change_percentage <= threshold:
                 return threshold
+        
         return None
-    
-    def _get_price_details(self, token_address: str, hours: int) -> Dict[str, float]:
-        """Получает детали изменения цены (была/стала)"""
-        try:
-            # Получаем текущую цену
-            current_price_data = self.database.get_latest_token_price(token_address)
-            if not current_price_data:
-                return {}
-            
-            current_price = float(current_price_data.get('price_usd', 0))
-            
-            # Получаем цену N часов назад
-            history = self.database.get_token_price_history(token_address, hours)
-            if not history:
-                return {}
-            
-            old_price = float(history[0].get('price_usd', 0))
-            
-            return {
-                'current_price': current_price,
-                'old_price': old_price,
-                'change_absolute': current_price - old_price,
-                'change_percentage': ((current_price - old_price) / old_price * 100) if old_price > 0 else 0
-            }
-            
-        except Exception as e:
-            logger.error(f"Error getting price details for {token_address}: {e}")
-            return {}
     
     async def start_session(self):
         """Инициализация HTTP клиента"""
@@ -181,7 +201,7 @@ class PriceTracker:
                         prices[token['address']] = {
                             'price_usd': eth_prices[token['address']],
                             'token_info': token,
-                            'timestamp': datetime.now()
+                            'timestamp': datetime.now(MOSCOW_TZ)
                         }
             
             if solana_tokens:
@@ -193,7 +213,7 @@ class PriceTracker:
                         prices[token['address']] = {
                             'price_usd': sol_prices[token['address']],
                             'token_info': token,
-                            'timestamp': datetime.now()
+                            'timestamp': datetime.now(MOSCOW_TZ)
                         }
             
             logger.info(f"Fetched prices for {len(prices)}/{len(self.tokens_to_track)} tokens")
@@ -228,97 +248,56 @@ class PriceTracker:
             except Exception as e:
                 logger.error(f"Error saving price for {token_address}: {e}")
     
-    def check_price_alerts(self, token_address: str, token_info: Dict[str, str]) -> List[Dict[str, Any]]:
-        """Проверка ценовых алертов для токена с пороговой логикой"""
+    def check_price_alerts(self, token_address: str, token_info: Dict[str, str], current_price: float) -> List[Dict[str, Any]]:
+        """Проверка ценовых алертов для токена с новой логикой"""
         alerts = []
         
         try:
-            # Проверяем изменения за разные периоды
-            for hours in self.comparison_periods:
-                change_percentage = self.database.get_price_change_percentage(token_address, hours)
+            # Проверяем каждый пороговый уровень
+            for threshold in self.alert_thresholds:
+                should_alert, reference_price = self._should_send_alert(token_address, current_price, threshold)
                 
-                if change_percentage is None:
-                    continue
-                
-                # Определяем пороговый уровень для падения
-                if change_percentage <= -self.price_drop_threshold:
-                    threshold = self._get_threshold_for_change(change_percentage)
+                if should_alert and reference_price > 0:
+                    # Проверяем достигнут ли этот порог
+                    actual_change = ((current_price - reference_price) / reference_price * 100)
                     
-                    if threshold is not None and self._should_send_alert(token_address, hours, threshold):
-                        # Получаем детали цены
-                        price_details = self._get_price_details(token_address, hours)
+                    if actual_change <= threshold:
+                        # Создаем сообщение с корректными ценами
+                        blockchain_name = self._get_blockchain_display_name(token_info['blockchain'])
+                        moscow_time = datetime.now(MOSCOW_TZ)
                         
-                        # Создаем улучшенное сообщение с ценами
-                        if price_details:
-                            message = (f'{token_info["symbol"]} price dropped {abs(change_percentage):.2f}% in {hours}h\n'
-                                     f'📉 ${price_details["old_price"]:.6f} → ${price_details["current_price"]:.6f}\n'
-                                     f'💰 Change: ${price_details["change_absolute"]:.6f}')
-                        else:
-                            message = f'{token_info["symbol"]} price dropped {abs(change_percentage):.2f}% in {hours}h'
+                        message = (f'{token_info["symbol"]} price dropped {abs(actual_change):.2f}%\n'
+                                 f'📉 ${reference_price:.6f} → ${current_price:.6f}')
                         
                         alert = {
                             'alert_type': 'price_drop',
                             'dao_name': token_info['dao_name'],
-                            'severity': 'high' if change_percentage <= -20 else 'medium',
-                            'title': f'Price Drop Alert - {token_info["symbol"]} ({threshold}%)',
+                            'severity': 'high' if actual_change <= -20 else 'medium',
+                            'title': f'Price Drop Alert - {token_info["symbol"]}',
                             'message': message,
                             'token_address': token_address,
                             'token_symbol': token_info['symbol'],
-                            'price_change': change_percentage,
-                            'time_period': f'{hours}h',
-                            'timestamp': datetime.now(),
+                            'price_change': actual_change,
+                            'timestamp': moscow_time,
                             'metadata': {
-                                'blockchain': token_info['blockchain'],
-                                'change_percentage': change_percentage,
-                                'period_hours': hours,
+                                'blockchain': blockchain_name,
+                                'change_percentage': actual_change,
                                 'threshold_triggered': threshold,
                                 'alert_type': 'threshold_drop',
-                                'price_details': price_details
+                                'current_price': current_price,
+                                'reference_price': reference_price,
+                                'moscow_time': moscow_time.strftime('%Y-%m-%d %H:%M:%S')
                             }
                         }
                         alerts.append(alert)
                         
                         # Отмечаем что алерт отправлен
-                        self._mark_alert_sent(token_address, hours, threshold)
+                        self._mark_alert_sent(token_address, threshold, reference_price)
                         
-                        logger.info(f"🚨 Price threshold alert: {token_info['symbol']} {threshold}% in {hours}h")
-                    
-                # Проверяем резкий рост цены
-                elif change_percentage >= self.price_spike_threshold:
-                    # Для роста используем простую логику без порогов (они реже нужны)
-                    if self._should_send_alert(token_address, hours, int(change_percentage)):
-                        price_details = self._get_price_details(token_address, hours)
+                        logger.info(f"🚨 Price threshold alert: {token_info['symbol']} {threshold}% (${reference_price:.6f} → ${current_price:.6f})")
                         
-                        if price_details:
-                            message = (f'{token_info["symbol"]} price increased {change_percentage:.2f}% in {hours}h\n'
-                                     f'📈 ${price_details["old_price"]:.6f} → ${price_details["current_price"]:.6f}\n'
-                                     f'💰 Change: +${price_details["change_absolute"]:.6f}')
-                        else:
-                            message = f'{token_info["symbol"]} price increased {change_percentage:.2f}% in {hours}h'
-                        
-                        alert = {
-                            'alert_type': 'price_spike',
-                            'dao_name': token_info['dao_name'],
-                            'severity': 'low',
-                            'title': f'Price Spike Alert - {token_info["symbol"]}',
-                            'message': message,
-                            'token_address': token_address,
-                            'token_symbol': token_info['symbol'],
-                            'price_change': change_percentage,
-                            'time_period': f'{hours}h',
-                            'timestamp': datetime.now(),
-                            'metadata': {
-                                'blockchain': token_info['blockchain'],
-                                'change_percentage': change_percentage,
-                                'period_hours': hours,
-                                'threshold_triggered': 'price_spike',
-                                'price_details': price_details
-                            }
-                        }
-                        alerts.append(alert)
-                        
-                        # Отмечаем что алерт отправлен
-                        self._mark_alert_sent(token_address, hours, int(change_percentage))
+                        # Берем только первый сработавший порог
+                        break
             
             return alerts
             
@@ -333,7 +312,9 @@ class PriceTracker:
         for token_address, price_data in prices.items():
             try:
                 token_info = price_data['token_info']
-                alerts = self.check_price_alerts(token_address, token_info)
+                current_price = price_data['price_usd']
+                
+                alerts = self.check_price_alerts(token_address, token_info, current_price)
                 
                 # Сохраняем алерты в базу данных
                 for alert in alerts:
