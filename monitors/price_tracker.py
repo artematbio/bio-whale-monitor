@@ -128,8 +128,15 @@ class PriceTracker:
                         max_price = max(float(p.get('price_usd', 0)) for p in recent_prices)
                         if max_price > current_price:
                             reference_price = max_price
+                    else:
+                        # Если нет исторических данных, используем текущую цену + 5%
+                        # как базовую для первого алерта (имитируем что цена недавно была выше)
+                        reference_price = current_price * 1.05
+                        logger.info(f"No price history for {token_address}, using current price + 5% as baseline: ${reference_price:.6f}")
                 except Exception as e:
                     logger.debug(f"Could not get price history for {token_address}: {e}")
+                    # В случае ошибки тоже используем текущую цену + 5%
+                    reference_price = current_price * 1.05
             
             return True, reference_price
         
