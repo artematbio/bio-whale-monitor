@@ -81,11 +81,11 @@ def setup_logging(log_level: str = 'INFO', log_file: Optional[str] = None):
 def get_database():
     """Получение экземпляра базы данных (SQLite или PostgreSQL)"""
     
-    # Проверяем переменную окружения для Railway
-    database_url = os.getenv('DATABASE_URL')
+    # Проверяем переменные окружения для Railway
+    database_url = os.getenv('DATABASE_URL') or os.getenv('DATABASE_PUBLIC_URL')
     
     if database_url and POSTGRESQL_AVAILABLE:
-        logging.info("Using PostgreSQL database for Railway deployment")
+        logging.info(f"Using PostgreSQL database for Railway deployment: {database_url[:50]}...")
         return PostgreSQLDatabase(database_url)
     else:
         logging.info("Using SQLite database for local development")
