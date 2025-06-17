@@ -375,35 +375,39 @@ class SolanaMonitor:
                 success = self.database.save_treasury_transaction(tx_data)
                 
                 if success and tx_data['alert_triggered']:
-                    # Создаем алерт для крупных транзакций
-                    alert_data = {
-                        'alert_type': 'large_transaction',
-                        'dao_name': dao_name,
-                        'severity': 'high' if transfer.amount_usd >= Decimal('50000') else 'medium',
-                        'title': f'Large Solana Transaction - {dao_name}',
-                        'message': f'{transfer.tx_type.title()} transfer of {transfer.amount:,.2f} {tx_data["token_symbol"]} (${transfer.amount_usd:,.2f})',
-                        'tx_hash': transfer.signature,
-                        'amount_usd': transfer.amount_usd,
-                        'timestamp': transfer.timestamp,
-                        'metadata': {
-                            'blockchain': 'solana',
-                            'token_symbol': tx_data["token_symbol"],
-                            'token_amount': transfer.amount,
-                            'tx_type': transfer.tx_type,
-                            'from_address': transfer.from_address,
-                            'to_address': transfer.to_address
+                    # Проверяем, не был ли уже отправлен алерт для этой транзакции
+                    if not self.database.is_alert_sent_for_transaction(transfer.signature):
+                        # Создаем алерт для крупных транзакций
+                        alert_data = {
+                            'alert_type': 'large_transaction',
+                            'dao_name': dao_name,
+                            'severity': 'high' if transfer.amount_usd >= Decimal('50000') else 'medium',
+                            'title': f'Large Solana Transaction - {dao_name}',
+                            'message': f'{transfer.tx_type.title()} transfer of {transfer.amount:,.2f} {tx_data["token_symbol"]} (${transfer.amount_usd:,.2f})',
+                            'tx_hash': transfer.signature,
+                            'amount_usd': transfer.amount_usd,
+                            'timestamp': transfer.timestamp,
+                            'metadata': {
+                                'blockchain': 'solana',
+                                'token_symbol': tx_data["token_symbol"],
+                                'token_amount': transfer.amount,
+                                'tx_type': transfer.tx_type,
+                                'from_address': transfer.from_address,
+                                'to_address': transfer.to_address
+                            }
                         }
-                    }
-                    
-                    self.database.save_alert(alert_data)
-                    logger.warning(f"ALERT: Large transaction detected - {dao_name} - ${transfer.amount_usd:,.2f}")
-                    
-                    # Отправляем уведомление в Telegram
-                    if self.notification_system:
-                        try:
-                            await self.notification_system.send_transaction_alert(tx_data)
-                        except Exception as e:
-                            logger.error(f"Failed to send Telegram alert: {e}")
+                        
+                        self.database.save_alert(alert_data)
+                        logger.warning(f"ALERT: Large transaction detected - {dao_name} - ${transfer.amount_usd:,.2f}")
+                        
+                        # Отправляем уведомление в Telegram
+                        if self.notification_system:
+                            try:
+                                await self.notification_system.send_transaction_alert(tx_data)
+                            except Exception as e:
+                                logger.error(f"Failed to send Telegram alert: {e}")
+                    else:
+                        logger.debug(f"Alert already sent for transaction: {transfer.signature}")
                 
             except Exception as e:
                 logger.error(f"Error saving transfer to database: {e}")

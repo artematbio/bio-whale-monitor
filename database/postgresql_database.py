@@ -373,13 +373,36 @@ class PostgreSQLDatabase:
             cursor = conn.cursor()
             
             cursor.execute("""
-                SELECT 1 FROM treasury_transactions WHERE tx_hash = %s
+                SELECT COUNT(*) FROM treasury_transactions WHERE tx_hash = %s
             """, (tx_hash,))
             
-            return cursor.fetchone() is not None
+            count = cursor.fetchone()[0]
+            return count > 0
             
         except Exception as e:
             logger.error(f"Error checking transaction: {e}")
+            return False
+        finally:
+            if conn:
+                self.put_connection(conn)
+    
+    def is_alert_sent_for_transaction(self, tx_hash: str) -> bool:
+        """Проверка, был ли уже отправлен алерт для данной транзакции"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM alerts 
+                WHERE tx_hash = %s AND alert_type = 'large_transaction'
+            """, (tx_hash,))
+            
+            count = cursor.fetchone()[0]
+            return count > 0
+            
+        except Exception as e:
+            logger.error(f"Error checking alert for transaction: {e}")
             return False
         finally:
             if conn:

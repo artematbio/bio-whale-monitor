@@ -364,14 +364,18 @@ class EthereumMonitor:
                     
                     # Логируем алерт если превышен порог
                     if transfer.amount_usd >= self.alert_threshold:
-                        logger.warning(f"🚨 ALERT: Large transaction detected! {dao_name} - ${transfer.amount_usd:,.2f}")
-                        
-                        # Отправляем уведомление в Telegram
-                        if self.notification_system:
-                            try:
-                                await self.notification_system.send_transaction_alert(tx_data)
-                            except Exception as e:
-                                logger.error(f"Failed to send Telegram alert: {e}")
+                        # Проверяем, не был ли уже отправлен алерт для этой транзакции
+                        if not self.database.is_alert_sent_for_transaction(transfer.tx_hash):
+                            logger.warning(f"🚨 ALERT: Large transaction detected! {dao_name} - ${transfer.amount_usd:,.2f}")
+                            
+                            # Отправляем уведомление в Telegram
+                            if self.notification_system:
+                                try:
+                                    await self.notification_system.send_transaction_alert(tx_data)
+                                except Exception as e:
+                                    logger.error(f"Failed to send Telegram alert: {e}")
+                        else:
+                            logger.debug(f"Alert already sent for transaction: {transfer.tx_hash}")
                 
             except Exception as e:
                 logger.error(f"Error saving transfer {transfer.tx_hash}: {e}")

@@ -106,10 +106,9 @@ class TelegramNotifier:
                     pass
                 message += f"⏰ **Time:** {timestamp.strftime('%Y-%m-%d %H:%M:%S UTC')}\n"
             
-            # Хэш транзакции (сокращенный)
+            # Хэш транзакции (полный)
             if tx_hash:
-                short_hash = f"{tx_hash[:8]}...{tx_hash[-8:]}" if len(tx_hash) > 20 else tx_hash
-                message += f"🔗 **TX:** `{short_hash}`\n"
+                message += f"🔗 **TX:** `{tx_hash}`\n"
             
             # Описание
             description = alert_data.get('message', '')

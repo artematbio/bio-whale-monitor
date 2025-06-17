@@ -418,6 +418,26 @@ class DAOTreasuryDatabase:
             logger.error(f"Error checking transaction: {e}")
             return False
     
+    def is_alert_sent_for_transaction(self, tx_hash: str) -> bool:
+        """Проверка, был ли уже отправлен алерт для данной транзакции"""
+        try:
+            conn = sqlite3.connect(self.db_path)
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT COUNT(*) FROM alerts 
+                WHERE tx_hash = ? AND alert_type = 'large_transaction'
+            """, (tx_hash,))
+            
+            count = cursor.fetchone()[0]
+            conn.close()
+            
+            return count > 0
+            
+        except Exception as e:
+            logger.error(f"Error checking alert for transaction: {e}")
+            return False
+    
     def get_database_stats(self) -> Dict[str, Any]:
         """Получение статистики базы данных"""
         try:
