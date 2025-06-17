@@ -367,30 +367,32 @@ class PostgreSQLDatabase:
     
     def is_transaction_processed(self, tx_hash: str) -> bool:
         """Проверка, была ли транзакция уже обработана"""
-        conn = None
         try:
-            conn = self.get_connection()
+            # Используем прямое подключение вместо connection pool
+            import psycopg2
+            conn = psycopg2.connect(self.database_url)
             cursor = conn.cursor()
             
             cursor.execute("""
                 SELECT COUNT(*) FROM treasury_transactions WHERE tx_hash = %s
             """, (tx_hash,))
             
-            count = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            count = result[0] if result else 0
+            conn.close()
+            
             return count > 0
             
         except Exception as e:
-            logger.error(f"Error checking transaction: {e}")
+            logger.error(f"Error checking transaction {tx_hash}: {e}")
             return False
-        finally:
-            if conn:
-                self.put_connection(conn)
     
     def is_alert_sent_for_transaction(self, tx_hash: str) -> bool:
         """Проверка, был ли уже отправлен алерт для данной транзакции"""
-        conn = None
         try:
-            conn = self.get_connection()
+            # Используем прямое подключение вместо connection pool
+            import psycopg2
+            conn = psycopg2.connect(self.database_url)
             cursor = conn.cursor()
             
             cursor.execute("""
@@ -398,15 +400,15 @@ class PostgreSQLDatabase:
                 WHERE tx_hash = %s AND alert_type = 'large_transaction'
             """, (tx_hash,))
             
-            count = cursor.fetchone()[0]
+            result = cursor.fetchone()
+            count = result[0] if result else 0
+            conn.close()
+            
             return count > 0
             
         except Exception as e:
-            logger.error(f"Error checking alert for transaction: {e}")
+            logger.error(f"Error checking alert for transaction {tx_hash}: {e}")
             return False
-        finally:
-            if conn:
-                self.put_connection(conn)
     
     def close(self):
         """Закрытие connection pool"""
