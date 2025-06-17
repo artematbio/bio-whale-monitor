@@ -353,9 +353,9 @@ class DAOTreasuryMonitorApp:
         self.logger.info("Starting DAO Treasury Monitor")
         self.running = True
         
-        # Отправляем уведомление о деплое в Railway
-        if os.getenv('RAILWAY_ENVIRONMENT') and self.notification_system:
-            await self._send_deployment_notification_async()
+        # Отправляем уведомление о деплое в Railway - ОТКЛЮЧЕНО
+        # if os.getenv('RAILWAY_ENVIRONMENT') and self.notification_system:
+        #     await self._send_deployment_notification_async()
         
         # Создаем задачи для параллельного выполнения
         tasks = []
