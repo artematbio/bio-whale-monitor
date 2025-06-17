@@ -410,6 +410,207 @@ class PostgreSQLDatabase:
             logger.error(f"Error checking alert for transaction {tx_hash}: {e}")
             return False
     
+    def save_token_price(self, price_data: Dict[str, Any]) -> bool:
+        """Сохранение цены токена"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                INSERT INTO token_prices (
+                    token_address, token_symbol, blockchain, price_usd,
+                    timestamp, market_cap_usd, volume_24h_usd, 
+                    price_change_24h, metadata
+                ) VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+            """, (
+                price_data['token_address'],
+                price_data['token_symbol'], 
+                price_data['blockchain'],
+                float(price_data['price_usd']),
+                price_data.get('timestamp', datetime.now()),
+                price_data.get('market_cap_usd'),
+                price_data.get('volume_24h_usd'),
+                price_data.get('price_change_24h'),
+                json.dumps(price_data.get('metadata', {}))
+            ))
+            
+            conn.commit()
+            logger.debug(f"Saved token price: {price_data['token_symbol']} - ${price_data['price_usd']:.6f}")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error saving token price: {e}")
+            if conn:
+                conn.rollback()
+            return False
+        finally:
+            if conn:
+                self.put_connection(conn)
+    
+    def get_latest_token_price(self, token_address: str) -> Optional[Dict[str, Any]]:
+        """Получение последней цены токена"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cursor.execute("""
+                SELECT token_address, token_symbol, blockchain, price_usd,
+                       timestamp, market_cap_usd, volume_24h_usd, 
+                       price_change_24h, metadata
+                FROM token_prices 
+                WHERE token_address = %s
+                ORDER BY timestamp DESC 
+                LIMIT 1
+            """, (token_address,))
+            
+            row = cursor.fetchone()
+            if row:
+                price_data = {
+                    'token_address': row[0],
+                    'token_symbol': row[1],
+                    'blockchain': row[2],
+                    'price_usd': float(row[3]),
+                    'timestamp': row[4],
+                    'market_cap_usd': row[5],
+                    'volume_24h_usd': row[6],
+                    'price_change_24h': row[7],
+                    'metadata': json.loads(row[8]) if row[8] else {}
+                }
+                return price_data
+            
+            return None
+            
+        except Exception as e:
+            logger.error(f"Error getting latest token price: {e}")
+            return None
+        finally:
+            if conn:
+                self.put_connection(conn)
+    
+    def get_token_price_history(self, token_address: str, hours: int = 24) -> List[Dict[str, Any]]:
+        """Получение истории цен токена за период"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            since_time = datetime.now() - timedelta(hours=hours)
+            
+            cursor.execute("""
+                SELECT token_address, token_symbol, blockchain, price_usd,
+                       timestamp, market_cap_usd, volume_24h_usd, 
+                       price_change_24h, metadata
+                FROM token_prices 
+                WHERE token_address = %s 
+                AND timestamp >= %s
+                ORDER BY timestamp DESC
+            """, (token_address, since_time))
+            
+            prices = []
+            for row in cursor.fetchall():
+                price_data = {
+                    'token_address': row[0],
+                    'token_symbol': row[1],
+                    'blockchain': row[2],
+                    'price_usd': float(row[3]),
+                    'timestamp': row[4],
+                    'market_cap_usd': row[5],
+                    'volume_24h_usd': row[6],
+                    'price_change_24h': row[7],
+                    'metadata': json.loads(row[8]) if row[8] else {}
+                }
+                prices.append(price_data)
+            
+            return prices
+            
+        except Exception as e:
+            logger.error(f"Error getting token price history: {e}")
+            return []
+        finally:
+            if conn:
+                self.put_connection(conn)
+    
+    def get_price_change_percentage(self, token_address: str, hours: int = 1) -> Optional[float]:
+        """Вычисление процентного изменения цены за период"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            # Получаем последнюю цену
+            cursor.execute("""
+                SELECT price_usd FROM token_prices 
+                WHERE token_address = %s
+                ORDER BY timestamp DESC 
+                LIMIT 1
+            """, (token_address,))
+            
+            current_row = cursor.fetchone()
+            if not current_row:
+                return None
+            
+            current_price = float(current_row[0])
+            
+            # Получаем цену N часов назад
+            past_time = datetime.now() - timedelta(hours=hours)
+            cursor.execute("""
+                SELECT price_usd FROM token_prices 
+                WHERE token_address = %s 
+                AND timestamp <= %s
+                ORDER BY timestamp DESC 
+                LIMIT 1
+            """, (token_address, past_time))
+            
+            past_row = cursor.fetchone()
+            if not past_row:
+                return None
+            
+            past_price = float(past_row[0])
+            
+            if past_price == 0:
+                return None
+            
+            # Вычисляем процентное изменение
+            change_percentage = ((current_price - past_price) / past_price) * 100
+            return round(change_percentage, 2)
+            
+        except Exception as e:
+            logger.error(f"Error calculating price change: {e}")
+            return None
+        finally:
+            if conn:
+                self.put_connection(conn)
+    
+    def cleanup_old_prices(self, days: int = 30) -> int:
+        """Удаление старых записей цен (старше N дней)"""
+        conn = None
+        try:
+            conn = self.get_connection()
+            cursor = conn.cursor()
+            
+            cutoff_time = datetime.now() - timedelta(days=days)
+            cursor.execute("""
+                DELETE FROM token_prices 
+                WHERE timestamp < %s
+            """, (cutoff_time,))
+            
+            deleted_count = cursor.rowcount
+            conn.commit()
+            
+            logger.info(f"Cleaned up {deleted_count} old price records")
+            return deleted_count
+            
+        except Exception as e:
+            logger.error(f"Error cleaning up old prices: {e}")
+            if conn:
+                conn.rollback()
+            return 0
+        finally:
+            if conn:
+                self.put_connection(conn)
+    
     def close(self):
         """Закрытие connection pool"""
         if self.connection_pool:
