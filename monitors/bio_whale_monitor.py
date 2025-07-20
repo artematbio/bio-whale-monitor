@@ -17,7 +17,9 @@ from config.whale_config import (
     BIO_TOKENS, 
     WHALE_THRESHOLDS, 
     MONITORED_WALLETS,
-    MONITORING_CONFIG
+    MONITORING_CONFIG,
+    get_resolved_wallet_addresses,
+    is_ens_domain
 )
 from utils.price_utils import get_bio_token_price, format_price
 from notifications.notification_system import NotificationSystem
@@ -76,6 +78,10 @@ class BIOWhaleMonitor:
         self.token_contracts = {}
         self._initialize_token_contracts()
         
+        # Разрешение ENS доменов в адреса
+        self.monitored_addresses = []
+        self._resolve_wallet_addresses()
+        
         # Кэш для хранения последних обработанных блоков
         self.last_processed_blocks = {}
         
@@ -99,6 +105,30 @@ class BIOWhaleMonitor:
                 self.logger.info(f"✅ Initialized {token_key} contract: {contract_address}")
             except Exception as e:
                 self.logger.error(f"❌ Failed to initialize {token_key} contract: {e}")
+    
+    def _resolve_wallet_addresses(self):
+        """Разрешение ENS доменов в Ethereum адреса"""
+        self.logger.info("🔍 Resolving wallet addresses (including ENS domains)...")
+        
+        resolved_addresses = get_resolved_wallet_addresses(self.w3)
+        
+        if resolved_addresses:
+            self.monitored_addresses = [addr.lower() for addr in resolved_addresses]
+            self.logger.info(f"✅ Resolved {len(self.monitored_addresses)} wallet addresses for monitoring")
+            
+            # Показываем статистику
+            ens_count = len([w for w in MONITORED_WALLETS if is_ens_domain(w)])
+            eth_count = len(MONITORED_WALLETS) - ens_count
+            self.logger.info(f"📊 Wallets: {ens_count} ENS domains + {eth_count} ETH addresses")
+            
+            # Показываем примеры разрешенных адресов
+            for i, addr in enumerate(self.monitored_addresses[:5]):
+                self.logger.info(f"   📍 {i+1}. {addr}")
+            if len(self.monitored_addresses) > 5:
+                self.logger.info(f"   ... and {len(self.monitored_addresses) - 5} more addresses")
+        else:
+            self.logger.warning("⚠️  No wallet addresses resolved!")
+            self.monitored_addresses = []
     
     async def _update_token_prices(self):
         """Обновление кэша цен токенов"""
@@ -258,7 +288,7 @@ class BIOWhaleMonitor:
                 tx_hash = event['transactionHash'].hex()
                 
                 # Проверяем только исходящие транзакции от отслеживаемых кошельков
-                if from_address.lower() in [w.lower() for w in MONITORED_WALLETS]:
+                if from_address.lower() in self.monitored_addresses:
                     is_whale = await self._check_whale_transaction(
                         token_key, tx_hash, from_address, to_address, amount
                     )
@@ -274,7 +304,7 @@ class BIOWhaleMonitor:
     async def run_whale_monitoring_cycle(self):
         """Запуск одного цикла мониторинга whale транзакций"""
         try:
-            if not MONITORED_WALLETS:
+            if not self.monitored_addresses:
                 self.logger.warning("⚠️ No wallets configured for monitoring")
                 return
             
@@ -305,7 +335,7 @@ class BIOWhaleMonitor:
     def get_monitoring_stats(self) -> Dict[str, Any]:
         """Получение статистики мониторинга"""
         return {
-            'monitored_wallets': len(MONITORED_WALLETS),
+            'monitored_wallets': len(self.monitored_addresses),
             'monitored_tokens': len(self.token_contracts),
             'token_threshold': WHALE_THRESHOLDS['token_amount'],
             'usd_threshold': WHALE_THRESHOLDS['usd_amount'],
