@@ -226,22 +226,27 @@ MONITORED_WALLETS.append("0x1234567890123456789012345678901234567890")
 ### 1. Подключение к Railway
 
 ```bash
-# Инициализация
+# Инициализация (если еще не сделано)
 railway login
 railway init
 
-# Связывание с проектом
+# Или связывание с существующим проектом
 railway link [project-id]
 ```
 
-### 2. Переменные окружения Railway
+### 2. Настройка переменных окружения в Railway
 
-В Railway панели настройте:
+В Railway панели настройте обязательные переменные:
 
-- `ETHEREUM_RPC_URL` - ваш Alchemy/Infura endpoint
-- `TELEGRAM_BOT_TOKEN` - токен Telegram бота
-- `TELEGRAM_CHAT_ID` - ID чата для уведомлений
-- `DATABASE_URL` - автоматически (PostgreSQL addon)
+**🔧 Обязательные:**
+- `ETHEREUM_RPC_URL` = `https://eth-mainnet.g.alchemy.com/v2/Hkg1Oi9c8x3JEiXj2cL62`
+- `TELEGRAM_BOT_TOKEN` = `your_bot_token_here` ✅ **УЖЕ НАСТРОЕНО**
+- `TELEGRAM_CHAT_ID` = `your_chat_id_here` ✅ **УЖЕ НАСТРОЕНО**
+
+**📦 Автоматические (Railway добавит сам):**
+- `DATABASE_URL` - PostgreSQL addon
+- `PORT` - порт приложения
+- `RAILWAY_ENVIRONMENT` - production
 
 ### 3. Деплой
 
@@ -252,6 +257,38 @@ git push origin main
 # Или через Railway CLI
 railway up
 ```
+
+### 4. Проверка работы Telegram уведомлений
+
+После деплоя проверьте логи Railway:
+
+**✅ Ожидаемые сообщения:**
+```
+Telegram notifier initialized for chat: YOUR_CHAT_ID
+Telegram notifications enabled
+Notification system initialized
+✅ Resolved 58 wallet addresses for monitoring
+🐋 Starting whale monitoring cycle...
+```
+
+**❌ Если что-то не так:**
+```
+TELEGRAM_BOT_TOKEN not set - Telegram notifications disabled
+TELEGRAM_CHAT_ID not set - Telegram notifications disabled
+```
+
+### 5. Тест уведомлений
+
+Railway автоматически запустит мониторинг. Для тестирования можете:
+
+1. **Проверить статус через health check:**
+   ```
+   https://your-app.railway.app/health
+   ```
+
+2. **Мониторить логи Railway** на предмет обнаружения транзакций
+
+3. **Дождаться первой whale транзакции** - система отправит уведомление автоматически
 
 ## 📊 База данных
 
