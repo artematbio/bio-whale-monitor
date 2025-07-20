@@ -274,37 +274,68 @@ class BIOWhaleMonitor:
     async def _scan_token_transfers(self, token_key: str, from_block: int, to_block: int):
         """Сканирование трансферов конкретного токена"""
         try:
+            self.logger.info(f"🔍 Starting {token_key} scan from block {from_block} to {to_block}")
+            
             token_data = self.token_contracts[token_key]
             contract = token_data['contract']
             
-            # Получаем события Transfer
-            transfer_filter = contract.events.Transfer.create_filter(
-                fromBlock=from_block,
-                toBlock=to_block
-            )
+            # Ограничиваем диапазон блоков для избежания timeout
+            max_block_range = 100
+            if to_block - from_block > max_block_range:
+                to_block = from_block + max_block_range
+                self.logger.warning(f"⚠️ Limiting block range to {max_block_range} blocks: {from_block}-{to_block}")
             
-            events = transfer_filter.get_all_entries()
+            self.logger.info(f"📡 Creating Transfer filter for {token_key}...")
+            
+            # Получаем события Transfer с timeout
+            try:
+                transfer_filter = contract.events.Transfer.create_filter(
+                    fromBlock=from_block,
+                    toBlock=to_block
+                )
+                
+                self.logger.info(f"🔍 Getting Transfer events for {token_key}...")
+                events = transfer_filter.get_all_entries()
+                self.logger.info(f"📊 Found {len(events)} Transfer events for {token_key}")
+                
+            except Exception as filter_error:
+                self.logger.error(f"❌ Error creating/getting filter for {token_key}: {filter_error}")
+                return
+            
             whale_count = 0
+            processed_count = 0
             
             for event in events:
-                from_address = event['args']['from']
-                to_address = event['args']['to']
-                amount = event['args']['value']
-                tx_hash = event['transactionHash'].hex()
-                
-                # Проверяем только исходящие транзакции от отслеживаемых кошельков
-                if from_address.lower() in self.monitored_addresses:
-                    is_whale = await self._check_whale_transaction(
-                        token_key, tx_hash, from_address, to_address, amount
-                    )
-                    if is_whale:
-                        whale_count += 1
+                try:
+                    processed_count += 1
+                    from_address = event['args']['from']
+                    to_address = event['args']['to']
+                    amount = event['args']['value']
+                    tx_hash = event['transactionHash'].hex()
+                    
+                    # Проверяем только исходящие транзакции от отслеживаемых кошельков
+                    if from_address.lower() in self.monitored_addresses:
+                        self.logger.debug(f"🎯 Checking potential whale tx from monitored wallet: {from_address[:10]}...")
+                        is_whale = await self._check_whale_transaction(
+                            token_key, tx_hash, from_address, to_address, amount
+                        )
+                        if is_whale:
+                            whale_count += 1
+                            self.logger.info(f"🐋 Whale transaction detected! #{whale_count}")
+                            
+                except Exception as event_error:
+                    self.logger.error(f"❌ Error processing event {processed_count}: {event_error}")
+                    continue
+            
+            self.logger.info(f"✅ {token_key} scan completed: {processed_count} events processed, {whale_count} whales found")
             
             if whale_count > 0:
                 self.logger.info(f"🐋 Found {whale_count} whale transactions for {token_key}")
                 
         except Exception as e:
             self.logger.error(f"❌ Error scanning {token_key} transfers: {e}")
+            import traceback
+            self.logger.error(f"Scan error traceback: {traceback.format_exc()}")
     
     async def run_whale_monitoring_cycle(self):
         """Запуск одного цикла мониторинга whale транзакций"""
@@ -316,26 +347,47 @@ class BIOWhaleMonitor:
             self.logger.info("🐋 Starting whale monitoring cycle...")
             
             # Обновляем цены токенов
-            await self._update_token_prices()
+            try:
+                self.logger.info("💰 Updating token prices...")
+                await self._update_token_prices()
+                self.logger.info("✅ Token prices updated successfully")
+            except Exception as price_error:
+                self.logger.error(f"❌ Failed to update token prices: {price_error}")
+                # Продолжаем работу даже без актуальных цен
             
             # Получаем текущий блок
-            current_block = self.w3.eth.block_number
-            lookback_blocks = MONITORING_CONFIG['blocks_lookback']
-            from_block = max(1, current_block - lookback_blocks)
-            
-            self.logger.info(f"🔍 Scanning blocks {from_block} to {current_block}")
+            try:
+                current_block = self.w3.eth.block_number
+                lookback_blocks = MONITORING_CONFIG['blocks_lookback']
+                from_block = max(1, current_block - lookback_blocks)
+                
+                self.logger.info(f"🔍 Current block: {current_block}, scanning from {from_block}")
+                
+            except Exception as block_error:
+                self.logger.error(f"❌ Failed to get current block: {block_error}")
+                return
             
             # Сканируем каждый токен
-            for token_key in self.token_contracts.keys():
-                self.logger.info(f"🔍 Scanning {token_key} transfers...")
-                await self._scan_token_transfers(token_key, from_block, current_block)
+            tokens_scanned = 0
+            total_tokens = len(self.token_contracts.keys())
             
-            self.logger.info("✅ Whale monitoring cycle completed")
+            for token_key in self.token_contracts.keys():
+                try:
+                    tokens_scanned += 1
+                    self.logger.info(f"🔍 Scanning {token_key} transfers... ({tokens_scanned}/{total_tokens})")
+                    await self._scan_token_transfers(token_key, from_block, current_block)
+                    self.logger.info(f"✅ {token_key} scan completed")
+                    
+                except Exception as token_error:
+                    self.logger.error(f"❌ Failed to scan {token_key}: {token_error}")
+                    continue  # Продолжаем с следующим токеном
+            
+            self.logger.info(f"✅ Whale monitoring cycle completed successfully! Scanned {tokens_scanned}/{total_tokens} tokens")
             
         except Exception as e:
-            self.logger.error(f"❌ Error in whale monitoring cycle: {e}")
+            self.logger.error(f"❌ Critical error in whale monitoring cycle: {e}")
             import traceback
-            self.logger.error(f"Traceback: {traceback.format_exc()}")
+            self.logger.error(f"Cycle error traceback: {traceback.format_exc()}")
     
     def get_monitoring_stats(self) -> Dict[str, Any]:
         """Получение статистики мониторинга"""
