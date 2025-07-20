@@ -319,11 +319,13 @@ class BIOWhaleMonitorApp:
                 self.logger.info(f"Whale monitoring stats: {whale_stats}")
             
             self.logger.info("✅ Test mode completed successfully")
+            return True
             
         except Exception as e:
             self.logger.error(f"❌ Test mode failed: {e}")
             import traceback
             self.logger.error(f"Test traceback: {traceback.format_exc()}")
+            return False
     
     async def run_test_alerts_mode(self):
         """Запуск тестирования алертов с Telegram уведомлениями"""
