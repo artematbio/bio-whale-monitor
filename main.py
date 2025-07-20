@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """
-DAO Treasury Monitor - Основной скрипт запуска
-Мониторинг treasury транзакций и pool активности для BIO Protocol DAOs
+BIO Whale Monitor - Основной скрипт запуска
+Мониторинг крупных исходящих транзакций BIO и vBIO токенов
 """
 
 import asyncio
@@ -24,14 +24,9 @@ except ImportError:
 # Добавляем текущую директорию в путь для импортов
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from config.dao_config import print_monitoring_summary
+from config.whale_config import print_whale_monitoring_summary, MONITORED_WALLETS
 from database.database import DAOTreasuryDatabase
-from monitors.solana_monitor import SolanaMonitor
-from monitors.price_tracker import PriceTracker
-# Добавляем Ethereum мониторинг
-from monitors.ethereum_monitor import EthereumMonitor
-# Добавляем Pool мониторинг
-from monitors.pool_monitor import PoolMonitor
+from monitors.bio_whale_monitor import BIOWhaleMonitor
 from notifications.notification_system import NotificationSystem, init_notification_system
 from health_check import get_health_server
 
@@ -91,17 +86,18 @@ def get_database():
         logging.info("Using SQLite database for local development")
         return DAOTreasuryDatabase()
 
-class DAOTreasuryMonitorApp:
-    """Основное приложение DAO Treasury Monitor"""
+def get_ethereum_rpc_url() -> Optional[str]:
+    """Получение Ethereum RPC URL"""
+    return os.getenv('ETHEREUM_RPC_URL')
+
+class BIOWhaleMonitorApp:
+    """Основное приложение BIO Whale Monitor"""
     
     def __init__(self, config: Dict[str, Any]):
         self.config = config
         self.logger = logging.getLogger(self.__class__.__name__)
         self.database = None
-        self.solana_monitor = None
-        self.ethereum_monitor = None  # Добавляем Ethereum мониторинг
-        self.pool_monitor = None      # Добавляем Pool мониторинг
-        self.price_tracker = None
+        self.whale_monitor = None
         self.notification_system = None
         self.health_server = None
         self.running = False
@@ -111,8 +107,7 @@ class DAOTreasuryMonitorApp:
         signal.signal(signal.SIGTERM, self._signal_handler)
         
         # API ключи
-        self.helius_api_key = get_helius_api_key()
-        self.ethereum_rpc_url = get_ethereum_rpc_url()  # Добавляем Ethereum RPC
+        self.ethereum_rpc_url = get_ethereum_rpc_url()
     
     def _signal_handler(self, signum, frame):
         """Обработчик сигналов для завершения работы"""
@@ -141,45 +136,29 @@ class DAOTreasuryMonitorApp:
             self.notification_system = init_notification_system(self.database)
             self.logger.info("Notification system initialized")
             
-            # Инициализируем Solana мониторинг
-            if self.helius_api_key:
-                self.solana_monitor = SolanaMonitor(self.helius_api_key, self.database, self.notification_system)
-                self.logger.info("Solana monitor initialized")
-            else:
-                self.logger.warning("Helius API key not found - Solana monitoring disabled")
+            # Проверяем наличие Ethereum RPC
+            if not self.ethereum_rpc_url:
+                self.logger.error("❌ ETHEREUM_RPC_URL not configured - whale monitoring cannot start")
+                raise Exception("Ethereum RPC URL is required for whale monitoring")
             
-            # Подробная диагностика Ethereum мониторинга
-            self.logger.info("=== ETHEREUM MONITORING DIAGNOSTICS ===")
-            self.logger.info(f"ETHEREUM_RPC_URL env var: {os.getenv('ETHEREUM_RPC_URL')}")
-            self.logger.info(f"RAILWAY_ENVIRONMENT: {os.getenv('RAILWAY_ENVIRONMENT')}")
-            self.logger.info(f"self.ethereum_rpc_url: {self.ethereum_rpc_url}")
-            self.logger.info(f"get_ethereum_rpc_url() result: {get_ethereum_rpc_url()}")
+            # Проверяем наличие отслеживаемых кошельков
+            if not MONITORED_WALLETS:
+                self.logger.warning("⚠️ No wallets configured for monitoring")
+                self.logger.warning("   Please add wallet addresses to config/whale_config.py")
             
-            # Инициализируем Ethereum мониторинг с диагностикой
-            self.logger.info(f"Checking Ethereum RPC URL: {self.ethereum_rpc_url}")
-            if self.ethereum_rpc_url:
-                try:
-                    self.ethereum_monitor = EthereumMonitor(self.ethereum_rpc_url, self.database, self.notification_system)
-                    self.logger.info("✅ Ethereum monitor initialized successfully")
-                except Exception as e:
-                    self.logger.error(f"❌ Failed to initialize Ethereum monitor: {e}")
-                    import traceback
-                    self.logger.error(f"Full traceback: {traceback.format_exc()}")
-                    self.ethereum_monitor = None
-            else:
-                self.logger.warning("❌ Ethereum RPC URL not found - Ethereum monitoring disabled")
-                self.logger.info(f"   ETHEREUM_RPC_URL env var: {os.getenv('ETHEREUM_RPC_URL')}")
-                self.logger.info(f"   RAILWAY_ENVIRONMENT: {os.getenv('RAILWAY_ENVIRONMENT')}")
-            
-            self.logger.info("=== END ETHEREUM DIAGNOSTICS ===")
-            
-            # Инициализируем price tracker
-            self.price_tracker = PriceTracker(self.database, self.notification_system)
-            self.logger.info("Price tracker initialized")
-            
-            # Инициализируем pool monitor
-            self.pool_monitor = PoolMonitor(self.database)
-            self.logger.info("Pool monitor initialized")
+            # Инициализируем BIO Whale мониторинг
+            try:
+                self.whale_monitor = BIOWhaleMonitor(
+                    self.ethereum_rpc_url, 
+                    self.database, 
+                    self.notification_system
+                )
+                self.logger.info("✅ BIO Whale monitor initialized successfully")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to initialize whale monitor: {e}")
+                import traceback
+                self.logger.error(f"Full traceback: {traceback.format_exc()}")
+                self.whale_monitor = None
             
             # Инициализируем health check server для Railway
             self.health_server = get_health_server()
@@ -193,55 +172,39 @@ class DAOTreasuryMonitorApp:
         """Асинхронная отправка уведомления о успешном деплое"""
         try:
             self.logger.info("🚀 Preparing deployment notification...")
-            self.logger.info(f"Railway environment: {os.getenv('RAILWAY_ENVIRONMENT')}")
-            self.logger.info(f"Notification system available: {self.notification_system is not None}")
             
-            if self.notification_system:
-                self.logger.info(f"Telegram bot available: {hasattr(self.notification_system, 'telegram')}")
-                if hasattr(self.notification_system, 'telegram'):
-                    self.logger.info(f"Telegram bot enabled: {self.notification_system.telegram.enabled if self.notification_system.telegram else False}")
-            
-            # Подсчитываем активные мониторы
-            solana_status = "✅ Active" if self.solana_monitor else "❌ Disabled"
-            ethernet_status = "✅ Active" if self.ethereum_monitor else "❌ Disabled"
-            pool_status = "✅ Active" if self.pool_monitor else "❌ Disabled"
+            # Проверяем статус мониторинга
+            whale_status = "✅ Active" if self.whale_monitor else "❌ Disabled"
+            wallets_count = len(MONITORED_WALLETS)
             
             # Статистика базы данных
             stats = self.database.get_database_stats()
             
-            message = f"""🚀 **DAO Treasury Monitor Deployed Successfully**
+            message = f"""🚀 **BIO Whale Monitor Deployed Successfully**
 
-**Monitor Status:**
-• Solana: {solana_status}
-• Ethereum: {ethernet_status}
-• Pool Monitor: {pool_status}
-• Price Tracker: ✅ Active
-• Health Check: ✅ Active
+🐋 **Whale Monitor Status:** {whale_status}
+👛 **Monitored Wallets:** {wallets_count}
+📊 **Health Check:** ✅ Active
 
 **Database Stats:**
 • Transactions: {stats.get('treasury_transactions', 0)}
 • Alerts: {stats.get('alerts', 0)}
 • DB Size: {stats.get('database_size_mb', 0):.2f} MB
 
-**Monitoring Scope:**
-• 4 Solana DAOs (Curetopia, SpineDAO, MYCO DAO)
-• 8 Ethereum DAOs (VitaDAO, PsychDAO, Athena DAO)
-• 20 Pool addresses tracked
-• 13+ Tokens monitored
-• $10K+ alert threshold
+**Monitoring Thresholds:**
+• Token Amount: 1,000,000+ BIO/vBIO
+• USD Value: $100,000+
+• Check Interval: 30 seconds
 
-🎯 All systems operational! Monitoring is active 24/7."""
-            
-            self.logger.info("📝 Deployment message formatted, attempting to send...")
+🎯 Whale monitoring is active 24/7!"""
             
             # Отправляем уведомление
             if hasattr(self.notification_system, 'telegram') and self.notification_system.telegram:
-                self.logger.info("📨 Calling telegram.send_message()...")
                 success = await self.notification_system.telegram.send_message(message)
                 if success:
                     self.logger.info("🎉 Deployment notification sent to Telegram successfully")
                 else:
-                    self.logger.warning("❌ Failed to send deployment notification to Telegram - send_message returned False")
+                    self.logger.warning("❌ Failed to send deployment notification to Telegram")
             else:
                 self.logger.warning("❌ Telegram bot not configured - deployment notification skipped")
                 
@@ -250,107 +213,35 @@ class DAOTreasuryMonitorApp:
             import traceback
             self.logger.error(f"Full traceback: {traceback.format_exc()}")
     
-    def _send_deployment_notification(self):
-        """Отправка уведомления о успешном деплое"""
-        try:
-            # Подсчитываем активные мониторы
-            solana_status = "✅ Active" if self.solana_monitor else "❌ Disabled"
-            ethernet_status = "✅ Active" if self.ethereum_monitor else "❌ Disabled"
-            pool_status = "✅ Active" if self.pool_monitor else "❌ Disabled"
-            
-            # Статистика базы данных
-            stats = self.database.get_database_stats()
-            
-            message = f"""🚀 **DAO Treasury Monitor Deployed Successfully**
-
-**Monitor Status:**
-• Solana: {solana_status}
-• Ethereum: {ethernet_status}
-• Pool Monitor: {pool_status}
-• Price Tracker: ✅ Active
-• Health Check: ✅ Active
-
-**Database Stats:**
-• Transactions: {stats.get('treasury_transactions', 0)}
-• Alerts: {stats.get('alerts', 0)}
-• DB Size: {stats.get('database_size_mb', 0):.2f} MB
-
-**Monitoring Scope:**
-• 4 Solana DAOs (Curetopia, SpineDAO, MYCO DAO)
-• 8 Ethereum DAOs (VitaDAO, PsychDAO, Athena DAO)
-• 20 Pool addresses tracked
-• 13+ Tokens monitored
-• $10K+ alert threshold
-
-🎯 All systems operational! Monitoring is active 24/7."""
-            
-            # Запускаем асинхронную отправку в отдельной задаче
-            import asyncio
-            
-            async def send_notification():
-                try:
-                    if hasattr(self.notification_system, 'telegram') and self.notification_system.telegram:
-                        await self.notification_system.telegram.send_message(message)
-                        self.logger.info("🎉 Deployment notification sent to Telegram")
-                    else:
-                        self.logger.warning("Telegram bot not configured - deployment notification skipped")
-                except Exception as e:
-                    self.logger.error(f"Failed to send deployment notification: {e}")
-            
-            # Планируем отправку на следующем event loop
-            try:
-                loop = asyncio.get_event_loop()
-                loop.create_task(send_notification())
-            except RuntimeError:
-                # Если event loop не запущен, пропускаем уведомление
-                self.logger.info("Event loop not running - deployment notification skipped")
-                
-        except Exception as e:
-            self.logger.error(f"Error in deployment notification: {e}")
-    
-    async def run_monitoring_cycle(self):
-        """Один цикл мониторинга"""
+    async def run_whale_monitoring_cycle(self):
+        """Один цикл whale мониторинга"""
         start_time = time.time()
         
         try:
-            self.logger.info("Starting monitoring cycle")
+            self.logger.info("Starting whale monitoring cycle")
             
-            # Запускаем Solana мониторинг
-            if self.solana_monitor:
-                self.logger.info("Running Solana monitoring...")
-                await self.solana_monitor.run_monitoring_cycle()
+            # Запускаем whale мониторинг
+            if self.whale_monitor:
+                self.logger.info("Running whale monitoring...")
+                await self.whale_monitor.run_whale_monitoring_cycle()
             else:
-                self.logger.warning("Solana monitor not available")
-            
-            # Запускаем Ethereum мониторинг
-            if self.ethereum_monitor:
-                self.logger.info("Running Ethereum monitoring...")
-                await self.ethereum_monitor.monitor_treasury_addresses()
-            else:
-                self.logger.warning("Ethereum monitor not available")
-            
-            # Запускаем Pool мониторинг
-            if self.pool_monitor:
-                self.logger.info("Running Pool monitoring...")
-                await self.pool_monitor.run_pool_monitoring_cycle()
-            else:
-                self.logger.warning("Pool monitor not available")
+                self.logger.warning("Whale monitor not available")
             
             # Обновляем время активности для health check
             if self.health_server:
                 self.health_server.update_activity_time()
             
             duration = time.time() - start_time
-            self.logger.info(f"Monitoring cycle completed in {duration:.2f}s")
+            self.logger.info(f"Whale monitoring cycle completed in {duration:.2f}s")
             
         except Exception as e:
-            self.logger.error(f"Error in monitoring cycle: {e}")
+            self.logger.error(f"Error in whale monitoring cycle: {e}")
             import traceback
             self.logger.error(f"Full traceback: {traceback.format_exc()}")
     
     async def start_monitoring(self):
-        """Запуск основного мониторинга с price tracking и health check"""
-        self.logger.info("Starting DAO Treasury Monitor")
+        """Запуск основного whale мониторинга"""
+        self.logger.info("Starting BIO Whale Monitor")
         self.running = True
         
         # Отправляем уведомление о деплое в Railway
@@ -367,13 +258,9 @@ class DAOTreasuryMonitorApp:
             tasks.append(asyncio.create_task(self.health_server.start_server()))
             self.logger.info(f"Health check server will start on port {port}")
         
-        # Основной мониторинг транзакций
-        if self.solana_monitor or self.ethereum_monitor:
-            tasks.append(asyncio.create_task(self._run_transaction_monitoring()))
-        
-        # Price tracking
-        if self.price_tracker:
-            tasks.append(asyncio.create_task(self._run_price_tracking()))
+        # Whale мониторинг
+        if self.whale_monitor:
+            tasks.append(asyncio.create_task(self._run_whale_monitoring()))
         
         if not tasks:
             self.logger.error("No monitors initialized, nothing to do")
@@ -387,46 +274,27 @@ class DAOTreasuryMonitorApp:
         finally:
             self.running = False
     
-    async def _run_transaction_monitoring(self):
-        """Запуск мониторинга транзакций"""
-        self.logger.info("🔍 Starting transaction monitoring thread")
+    async def _run_whale_monitoring(self):
+        """Запуск whale мониторинга"""
+        self.logger.info("🐋 Starting whale monitoring thread")
         
         while self.running:
             try:
-                self.logger.info("🏛️ Running transaction monitoring cycle...")
-                await self.run_monitoring_cycle()
-                self.logger.info("✅ Transaction monitoring cycle completed")
+                self.logger.info("🐋 Running whale monitoring cycle...")
+                await self.run_whale_monitoring_cycle()
+                self.logger.info("✅ Whale monitoring cycle completed")
                 
-                # Ожидание между циклами
-                self.logger.info("⏰ Waiting 30 seconds until next transaction cycle")
-                await asyncio.sleep(30)
-                
-            except Exception as e:
-                self.logger.error(f"❌ Error in transaction monitoring: {e}")
-                import traceback
-                self.logger.error(f"Transaction monitoring traceback: {traceback.format_exc()}")
-                self.logger.info("🔄 Retrying transaction monitoring in 60 seconds...")
-                await asyncio.sleep(60)
-    
-    async def _run_price_tracking(self):
-        """Запуск price tracking"""
-        self.logger.info("🎯 Starting price tracking thread")
-        
-        while self.running:
-            try:
-                self.logger.info("💰 Running price tracking cycle...")
-                await self.price_tracker.run_price_tracking_cycle()
-                self.logger.info("✅ Price tracking cycle completed successfully")
-                
-                # Ожидание между циклами price tracking (5 минут)
-                self.logger.info("⏰ Waiting 5 minutes until next price check")
-                await asyncio.sleep(300)
+                # Ожидание между циклами (настраивается в конфиге)
+                from config.whale_config import MONITORING_CONFIG
+                check_interval = MONITORING_CONFIG['check_interval']
+                self.logger.info(f"⏰ Waiting {check_interval} seconds until next whale check")
+                await asyncio.sleep(check_interval)
                 
             except Exception as e:
-                self.logger.error(f"❌ Error in price tracking: {e}")
+                self.logger.error(f"❌ Error in whale monitoring: {e}")
                 import traceback
-                self.logger.error(f"Price tracking traceback: {traceback.format_exc()}")
-                self.logger.info("🔄 Retrying price tracking in 60 seconds...")
+                self.logger.error(f"Whale monitoring traceback: {traceback.format_exc()}")
+                self.logger.info("🔄 Retrying whale monitoring in 60 seconds...")
                 await asyncio.sleep(60)
     
     def run_test_mode(self):
@@ -439,37 +307,23 @@ class DAOTreasuryMonitorApp:
             database_type = "PostgreSQL" if hasattr(self.database, 'connection_pool') else "SQLite"
             self.logger.info(f"Database test successful ({database_type}): {stats}")
             
-            # Тестируем получение цен токенов
+            # Тестируем получение цен BIO токенов
             from utils.price_utils import get_bio_token_price, format_price
             
-            bio_eth_price = get_bio_token_price('ethereum')
-            bio_sol_price = get_bio_token_price('solana')
+            bio_price = get_bio_token_price('ethereum')
+            self.logger.info(f"BIO token price: {format_price(bio_price)}")
             
-            self.logger.info(f"BIO (Ethereum) price: {format_price(bio_eth_price)}")
-            self.logger.info(f"BIO (Solana) price: {format_price(bio_sol_price)}")
+            # Проверяем конфигурацию whale мониторинга
+            if self.whale_monitor:
+                whale_stats = self.whale_monitor.get_monitoring_stats()
+                self.logger.info(f"Whale monitoring stats: {whale_stats}")
             
-            # Тестируем Solana мониторинг
-            if self.solana_monitor:
-                self.logger.info("Solana monitor test: OK")
-            else:
-                self.logger.warning("Solana monitor not available")
-            
-            # Тестируем Ethereum мониторинг
-            if self.ethereum_monitor:
-                self.logger.info("Ethereum monitor test: OK")
-            else:
-                self.logger.warning("Ethereum monitor not available")
-            
-            # Тестируем health check
-            if self.health_server:
-                self.logger.info("Health check server: OK")
-            
-            self.logger.info("Test mode completed successfully")
-            return True
+            self.logger.info("✅ Test mode completed successfully")
             
         except Exception as e:
-            self.logger.error(f"Test mode failed: {e}")
-            return False
+            self.logger.error(f"❌ Test mode failed: {e}")
+            import traceback
+            self.logger.error(f"Test traceback: {traceback.format_exc()}")
     
     async def run_test_alerts_mode(self):
         """Запуск тестирования алертов с Telegram уведомлениями"""
@@ -546,10 +400,10 @@ class DAOTreasuryMonitorApp:
     
     def show_status(self):
         """Показать статус системы"""
-        self.logger.info("=== DAO TREASURY MONITOR STATUS ===")
+        self.logger.info("=== BIO WHALE MONITOR STATUS ===")
         
         # Конфигурация
-        print_monitoring_summary()
+        print_whale_monitoring_summary()
         
         # Статистика базы данных
         if self.database:
@@ -564,17 +418,13 @@ class DAOTreasuryMonitorApp:
         
         # Состояние мониторов
         print(f"\nMonitor Status:")
-        print(f"  Solana Monitor: {'✓ Active' if self.solana_monitor else '✗ Disabled'}")
-        print(f"  Ethereum Monitor: {'✓ Active' if self.ethereum_monitor else '✗ Disabled'}")
+        print(f"  Whale Monitor: {'✓ Active' if self.whale_monitor else '✗ Disabled'}")
         print(f"  Health Check Server: {'✓ Available' if self.health_server else '✗ Disabled'}")
         
         # Переменные окружения
         print(f"\nEnvironment Variables:")
-        print(f"  HELIUS_API_KEY: {'✓ Set' if os.getenv('HELIUS_API_KEY') else '✗ Not set'}")
-        print(f"  COINGECKO_API_KEY: {'✓ Set' if os.getenv('COINGECKO_API_KEY') else '✓ Using default'}")
-        print(f"  TELEGRAM_BOT_TOKEN: {'✓ Set' if os.getenv('TELEGRAM_BOT_TOKEN') else '✗ Not set'}")
-        print(f"  TELEGRAM_CHAT_ID: {'✓ Set' if os.getenv('TELEGRAM_CHAT_ID') else '✗ Not set'}")
-        print(f"  DATABASE_URL: {'✓ Set (PostgreSQL)' if os.getenv('DATABASE_URL') else '✗ Not set (using SQLite)'}")
+        print(f"  ETHEREUM_RPC_URL: {'✓ Set' if self.ethereum_rpc_url else '✗ Not set'}")
+        print(f"  RAILWAY_ENVIRONMENT: {'✓ Set' if os.getenv('RAILWAY_ENVIRONMENT') else '✗ Not set'}")
         print(f"  PORT: {'✓ Set' if os.getenv('PORT') else '✗ Not set'}")
 
     def finalize_shutdown(self):
@@ -582,12 +432,8 @@ class DAOTreasuryMonitorApp:
         self.logger.info("Finalizing shutdown...")
         
         # Остановка мониторов
-        if self.solana_monitor:
-            # Solana monitor не требует специальной очистки
-            pass
-        
-        if self.price_tracker:
-            # Price tracker не требует специальной очистки
+        if self.whale_monitor:
+            # Whale monitor не требует специальной очистки
             pass
         
         # Закрытие базы данных
@@ -659,27 +505,9 @@ def get_helius_api_key() -> Optional[str]:
     # Используем ключ по умолчанию из конфигурации
     return 'd4af7b72-f199-4d77-91a9-11d8512c5e42'
 
-def get_ethereum_rpc_url() -> Optional[str]:
-    """Получение Ethereum RPC URL"""
-    # Пытаемся получить из переменной окружения
-    rpc_url = os.getenv('ETHEREUM_RPC_URL')
-    if rpc_url:
-        return rpc_url
-    
-    # Временный фикс для Railway - используем hardcoded URL если в Railway
-    if os.getenv('RAILWAY_ENVIRONMENT'):
-        return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
-    
-    # Для локальной разработки используем предоставленный Alchemy URL
-    if not os.getenv('RAILWAY_ENVIRONMENT'):
-        return 'https://eth-mainnet.g.alchemy.com/v2/0l42UZmHRHWXBYMJ2QFcdEE-Glj20xqn'
-    
-    # В Railway без ETHEREUM_RPC_URL возвращаем None
-    return None
-
 def main():
     """Основная функция"""
-    parser = argparse.ArgumentParser(description='DAO Treasury Monitor')
+    parser = argparse.ArgumentParser(description='BIO Whale Monitor')
     parser.add_argument('--mode', choices=['monitor', 'test', 'status', 'test-alerts'], 
                        default='monitor', help='Режим работы')
     parser.add_argument('--log-level', choices=['DEBUG', 'INFO', 'WARNING', 'ERROR'], 
@@ -693,7 +521,7 @@ def main():
     setup_logging(args.log_level, args.log_file)
     logger = logging.getLogger('main')
     
-    logger.info("Starting DAO Treasury Monitor")
+    logger.info("Starting BIO Whale Monitor")
     logger.info(f"Mode: {args.mode}")
     logger.info(f"Log level: {args.log_level}")
     
@@ -703,7 +531,7 @@ def main():
         config['log_level'] = args.log_level
         
         # Создание приложения
-        app = DAOTreasuryMonitorApp(config)
+        app = BIOWhaleMonitorApp(config)
         
         # Запуск приложения
         asyncio.run(app.run())

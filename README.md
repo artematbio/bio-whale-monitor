@@ -1,226 +1,363 @@
-# 🏛️ DAO Treasury Monitor
+# 🐋 BIO Whale Monitor
 
-Real-time monitoring system for BIO Protocol DAO treasury transactions and token activities.
+Мониторинг крупных исходящих транзакций BIO и vBIO токенов на Ethereum блокчейне.
 
-## 🚀 **Features**
+## 🎯 Описание
 
-- **24/7 Treasury Monitoring**: Tracks treasury transactions >$10K across multiple DAOs
-- **Real-time Telegram Alerts**: Instant notifications for large transactions and price movements
-- **Price Tracking**: Monitors BIO and DAO token price changes with alerts for >5% drops
-- **Multi-blockchain Support**: Solana (active) + Ethereum (planned)
-- **Production Ready**: Railway deployment with PostgreSQL, health checks, and auto-scaling
+BIO Whale Monitor - это система мониторинга, которая отслеживает крупные исходящие транзакции BIO и vBIO токенов от указанного списка кошельков. Система отправляет уведомления в Telegram при обнаружении транзакций, превышающих настроенные пороговые значения.
 
-## 📊 **Currently Monitoring**
+## 📊 Функциональность
 
-- **11 DAOs**: VitaDAO, ValleyDAO, CryoDAO, HairDAO, PsyDAO, AthenaDAO, and more
-- **4 Active Treasury Addresses** on Solana
-- **13 Tokens**: BIO, VITA, and other DAO tokens
-- **Alert Threshold**: $10,000 USD
+### Основные возможности
+- 🐋 **Мониторинг whale транзакций** - отслеживание крупных переводов BIO/vBIO
+- 💰 **Двойная фильтрация** - по количеству токенов ИЛИ по USD стоимости
+- 📱 **Telegram уведомления** - мгновенные алерты с деталями транзакции
+- 🗄️ **База данных** - сохранение истории whale транзакций
+- 🔄 **Real-time мониторинг** - проверка каждые 30 секунд
+- 🌐 **Railway деплой** - готов к производственному развертыванию
 
-## 🔧 **Technology Stack**
+### Пороговые значения
+- **Количество токенов**: ≥1,000,000 BIO/vBIO
+- **USD стоимость**: ≥$100,000
+- **Источник**: только от отслеживаемых кошельков
+- **Направление**: только исходящие транзакции
 
-- **Backend**: Python 3.11, FastAPI, aiohttp
-- **Database**: PostgreSQL (production) / SQLite (development)
-- **Blockchain APIs**: Helius (Solana), CoinGecko (prices)
-- **Notifications**: Telegram Bot API
-- **Deployment**: Railway with Docker, health checks, auto-restart
+## 🚀 Быстрый старт
 
-## 🚀 **Railway Deployment**
+### 1. Настройка переменных окружения
 
-### Quick Setup:
-1. Fork this repository
-2. Create Railway project and connect GitHub
-3. Add PostgreSQL service
-4. Set environment variables:
-   ```bash
-   HELIUS_API_KEY=your_helius_key
-   TELEGRAM_BOT_TOKEN=your_bot_token
-   TELEGRAM_CHAT_ID=your_chat_id
-   COINGECKO_API_KEY=your_coingecko_key
-   ```
-5. Deploy automatically
-
-### Health Check Endpoints:
-- `/health` - System health status
-- `/status` - Detailed system information  
-- `/metrics` - Performance metrics
-
-## 📱 **Telegram Bot Setup**
-
-1. Create bot with [@BotFather](https://t.me/botfather)
-2. Get bot token and your chat ID
-3. Add to Railway environment variables
-4. Bot will send alerts for:
-   - Treasury transactions >$10K
-   - Token price drops >5%
-   - Daily summaries
-
-## 🔍 **Local Development**
+Создайте файл `.env`:
 
 ```bash
-# Install dependencies
-pip install -r requirements.txt
+# Ethereum RPC (обязательно)
+ETHEREUM_RPC_URL=https://eth-mainnet.g.alchemy.com/v2/YOUR_ALCHEMY_KEY
 
-# Run different modes
-python main.py --mode monitor     # Start monitoring
-python main.py --mode test        # Test connections
-python main.py --mode status      # Show system status
-python main.py --mode test-alerts # Test Telegram alerts
+# Telegram (обязательно для уведомлений)
+TELEGRAM_BOT_TOKEN=your_telegram_bot_token
+TELEGRAM_CHAT_ID=your_telegram_chat_id
+
+# База данных (опционально, для Railway)
+DATABASE_URL=postgresql://user:password@host:port/dbname
+
+# CoinGecko API (опционально, для цен)
+COINGECKO_API_KEY=your_coingecko_api_key
+
+# Railway (автоматически)
+RAILWAY_ENVIRONMENT=production
+PORT=8080
 ```
 
-## 📈 **Monitoring Coverage**
+### 2. Добавление кошельков для мониторинга
 
-### Solana Treasury Addresses:
-- VitaDAO: `7QuWPKmgtVJ5cydTXYPk9EEtQDC3Loo8EPiB2kZRBhP4`
-- Other DAOs: Additional addresses configured
+Отредактируйте `config/whale_config.py`:
 
-### Supported Tokens:
-- BIO Protocol tokens (Ethereum & Solana)
-- DAO-specific tokens (VITA, etc.)
-- Real-time price tracking via CoinGecko
-
-## 🛡️ **Security & Performance**
-
-- **Environment Variables**: All API keys secured
-- **Connection Pooling**: Optimized database connections
-- **Rate Limiting**: Respectful API usage
-- **Error Handling**: Robust retry logic and fallbacks
-- **Health Monitoring**: Auto-restart on failures
-
-## 📊 **Architecture**
-
-```
-┌─────────────────┐    ┌──────────────────┐    ┌─────────────────┐
-│   Blockchain    │    │   DAO Treasury   │    │    Telegram     │
-│   APIs (Helius,│───▶│    Monitor       │───▶│   Notifications │
-│   CoinGecko)    │    │                  │    │                 │
-└─────────────────┘    └──────────────────┘    └─────────────────┘
-                                │
-                                ▼
-                       ┌──────────────────┐
-                       │   PostgreSQL     │
-                       │   Database       │
-                       └──────────────────┘
+```python
+MONITORED_WALLETS = [
+    "0x1234567890123456789012345678901234567890",  # Кошелек 1
+    "0xabcdefabcdefabcdefabcdefabcdefabcdefabcd",  # Кошелек 2
+    # Добавьте свои адреса
+]
 ```
 
-## 🚀 **Ready for Production**
+### 3. Проверка адресов BIO токенов
 
-This system is production-ready with:
-- ✅ Automatic Railway deployment
-- ✅ Health checks and monitoring
-- ✅ PostgreSQL database with backups
-- ✅ Real-time Telegram notifications
-- ✅ 24/7 treasury monitoring
-- ✅ Scalable architecture
+В `config/whale_config.py` убедитесь что адреса токенов корректны:
 
----
-
-**Live monitoring of DAO treasuries with instant alerts for significant activities.**
-
-## 🎯 Основные функции
-
-- 📊 **Мониторинг Treasury:** Отслеживание исходящих транзакций от treasury адресов (>$10K)
-- 🔄 **Swap мониторинг:** Детекция swaps BIO и DAO токенов в другие валюты  
-- 🏊 **Pool активность:** Мониторинг add/remove liquidity в пулах Raydium и Uniswap
-- 🚨 **Real-time алерты:** Уведомления о крупных операциях в Telegram/Discord
-- 📈 **Ежедневные отчеты:** Агрегация данных и analytics
-
-## 🏗️ Архитектура
-
-```
-dao_treasury_monitor/
-├── main.py                    # Точка входа
-├── config/                    # Конфигурации DAO
-├── monitors/                  # Мониторинг модули  
-├── database/                  # База данных
-├── notifications/             # Система уведомлений
-├── utils/                     # Утилиты
-└── deploy/                    # Деплоймент конфиги
+```python
+BIO_TOKENS = {
+    "BIO": {
+        "contract_address": "0xcbb7C0000aB88B473b1f5aFd9ef808440eed33Bf",  # Проверьте адрес
+        "symbol": "BIO",
+        "decimals": 18,
+        "name": "BIO Protocol"
+    },
+    "vBIO": {
+        "contract_address": "0x1234567890123456789012345678901234567890",  # НУЖНО УТОЧНИТЬ!
+        "symbol": "vBIO", 
+        "decimals": 18,
+        "name": "Voting BIO"
+    }
+}
 ```
 
-## ⚡ Быстрый старт
+### 4. Установка зависимостей
 
-### Установка зависимостей:
 ```bash
-cd dao_treasury_monitor
 pip install -r requirements.txt
 ```
 
-### Настройка переменных окружения:
+### 5. Запуск
+
 ```bash
-cp .env.example .env
-# Отредактируйте .env файл с вашими API ключами
+# Тестовый режим
+python main.py --mode test
+
+# Показать конфигурацию
+python main.py --mode status
+
+# Запуск мониторинга
+python main.py --mode monitor
 ```
 
-### Запуск мониторинга:
-```bash
-python main.py
+## 📋 Конфигурация
+
+### Файлы конфигурации
+
+- `config/whale_config.py` - основная конфигурация whale мониторинга
+- `.env` - переменные окружения
+
+### Настройки мониторинга
+
+```python
+# В config/whale_config.py
+WHALE_THRESHOLDS = {
+    "token_amount": 1_000_000,  # 1 миллион токенов
+    "usd_amount": 100_000,      # $100,000 USD
+}
+
+MONITORING_CONFIG = {
+    "check_interval": 30,       # Интервал проверки в секундах
+    "blocks_lookback": 5,       # Количество блоков для проверки назад
+    "retry_attempts": 3,
+    "retry_delay": 5,
+}
 ```
 
-## 🔧 Конфигурация
+## 📨 Формат уведомлений
 
-Основные настройки в `config/settings.py`:
-- API ключи для Helius, CoinGecko, Alchemy
-- Пороги для алертов ($10K по умолчанию)
-- Интервалы мониторинга
-- Telegram/Discord настройки
+При обнаружении whale транзакции вы получите уведомление:
 
-DAO конфигурации в `config/dao_config.py`:
-- Treasury адреса на Solana и Ethereum
-- Токены для мониторинга
-- Пулы ликвидности
+```
+🐋 WHALE ALERT: Large BIO Transfer
 
-## 📊 Мониторимые DAO
+💰 Amount: 2,500,000.00 BIO
+💵 USD Value: $375,000.00
 
-- 🧬 **VitaDAO** - Longevity research
-- 🧪 **ValleyDAO** - Синтетическая биология
-- ❄️ **CryoDAO** - Крионические исследования
-- 💇 **HairDAO** - Исследования волос
-- 🍄 **PsyDAO** - Психоделические исследования
-- 👩 **AthenaDAO** - Женское здоровье
+📤 From: 0x1234...7890
+📥 To: 0xabcd...efgh
 
-## 🚀 Roadmap
+🔗 Transaction: 0xdef456...
+🌐 Etherscan: https://etherscan.io/tx/0xdef456...
 
-Подробный план развития см. в [DAO_TREASURY_MONITOR_PLAN.md](DAO_TREASURY_MONITOR_PLAN.md)
+⏰ Time: 2025-06-18 12:34:56 UTC
+🚨 Alert Triggered: Token amount threshold exceeded
+```
 
-### Этап 1: ✅ MVP - Solana мониторинг
-### Этап 2: 🟡 Raydium Pool мониторинг  
-### Этап 3: 🔴 Ethereum/Uniswap интеграция
-### Этап 4: 🔴 Real-time алерты
-### Этап 5: 🔴 Railway деплоймент
+## 🔧 Управление
 
-## 📝 API Requirements
+### Команды
 
-### ✅ Уже настроенные:
-- Helius API (Solana RPC)
-- CoinGecko API (цены токенов)
-- Bitquery API (исторические данные)
-- Raydium API v3
+```bash
+# Мониторинг (основной режим)
+python main.py --mode monitor
 
-### ❌ Требуются дополнительно:
-- Alchemy API (Ethereum RPC)
-- Telegram Bot Token
-- Discord Webhook URL
+# Тестирование подключений
+python main.py --mode test
 
-## 🤝 Contributing
+# Показать статус и конфигурацию
+python main.py --mode status
 
-1. Fork репозиторий
-2. Создайте feature branch
-3. Commit изменения
-4. Push в branch
-5. Создайте Pull Request
+# Тест уведомлений
+python main.py --mode test-alerts
 
-## 📄 License
+# С логированием в файл
+python main.py --mode monitor --log-file whale_monitor.log
 
-MIT License - см. [LICENSE](LICENSE) файл
+# Уровень логирования
+python main.py --mode monitor --log-level DEBUG
+```
 
-## 🔗 Links
+### Добавление кошельков
 
-- [BIO Protocol](https://www.bioprotocol.com/)
-- [Raydium](https://raydium.io/)
-- [Uniswap](https://uniswap.org/)
-- [Railway](https://railway.app/)
+Для добавления новых кошельков для мониторинга:
 
----
+```python
+# В config/whale_config.py
+from config.whale_config import add_monitored_wallet
 
-**Последнее обновление:** 9 декабря 2024 
+# Добавление через функцию (с валидацией)
+add_monitored_wallet("0x1234567890123456789012345678901234567890")
+
+# Или прямо в список
+MONITORED_WALLETS.append("0x1234567890123456789012345678901234567890")
+```
+
+## 🚀 Деплой на Railway
+
+### 1. Подключение к Railway
+
+```bash
+# Инициализация
+railway login
+railway init
+
+# Связывание с проектом
+railway link [project-id]
+```
+
+### 2. Переменные окружения Railway
+
+В Railway панели настройте:
+
+- `ETHEREUM_RPC_URL` - ваш Alchemy/Infura endpoint
+- `TELEGRAM_BOT_TOKEN` - токен Telegram бота
+- `TELEGRAM_CHAT_ID` - ID чата для уведомлений
+- `DATABASE_URL` - автоматически (PostgreSQL addon)
+
+### 3. Деплой
+
+```bash
+# Автоматический деплой при push в main
+git push origin main
+
+# Или через Railway CLI
+railway up
+```
+
+## 📊 База данных
+
+### SQLite (локальная разработка)
+- Файл: `dao_treasury.db`
+- Создается автоматически
+
+### PostgreSQL (Railway)
+- Используется автоматически при наличии `DATABASE_URL`
+- Миграции выполняются при запуске
+
+### Схема данных
+
+```sql
+-- Таблица транзакций
+CREATE TABLE treasury_transactions (
+    id INTEGER PRIMARY KEY,
+    transaction_hash TEXT UNIQUE,
+    from_address TEXT,
+    to_address TEXT,
+    token_symbol TEXT,
+    token_amount REAL,
+    usd_value REAL,
+    transaction_type TEXT,
+    timestamp DATETIME,
+    block_number INTEGER
+);
+
+-- Таблица алертов
+CREATE TABLE alerts (
+    id INTEGER PRIMARY KEY,
+    transaction_hash TEXT,
+    alert_type TEXT,
+    message TEXT,
+    sent_at DATETIME,
+    success BOOLEAN
+);
+```
+
+## 🛠️ Разработка
+
+### Структура проекта
+
+```
+bio-whale-monitor/
+├── main.py                     # Точка входа
+├── config/
+│   └── whale_config.py         # Конфигурация whale мониторинга
+├── monitors/
+│   └── bio_whale_monitor.py    # Основной whale мониторинг
+├── database/
+│   ├── database.py             # SQLite адаптер
+│   └── postgresql_database.py  # PostgreSQL адаптер
+├── notifications/
+│   ├── telegram_bot.py         # Telegram бот
+│   └── notification_system.py  # Система уведомлений
+├── utils/
+│   └── price_utils.py          # Утилиты для работы с ценами
+├── health_check.py             # Health check для Railway
+├── requirements.txt            # Python зависимости
+├── Dockerfile                  # Docker конфигурация
+├── railway.toml               # Railway конфигурация
+└── README.md                  # Документация
+```
+
+### Добавление новых токенов
+
+```python
+# В config/whale_config.py
+BIO_TOKENS["NEW_TOKEN"] = {
+    "contract_address": "0x...",
+    "symbol": "NEW",
+    "decimals": 18,
+    "name": "New Token"
+}
+```
+
+### Кастомизация пороговых значений
+
+```python
+# В config/whale_config.py
+WHALE_THRESHOLDS = {
+    "token_amount": 500_000,    # Снизить до 500k токенов
+    "usd_amount": 50_000,       # Снизить до $50k
+}
+```
+
+## 🔍 Мониторинг и отладка
+
+### Логи
+
+```bash
+# Просмотр логов Railway
+railway logs
+
+# Локальные логи
+tail -f whale_monitor.log
+```
+
+### Health Check
+
+- **URL**: `https://your-app.railway.app/health`
+- **Статус**: показывает время последней активности
+
+### Диагностика
+
+```bash
+# Проверка подключения к Ethereum
+python -c "
+from web3 import Web3
+w3 = Web3(Web3.HTTPProvider('YOUR_RPC_URL'))
+print(f'Connected: {w3.is_connected()}')
+print(f'Latest block: {w3.eth.block_number}')
+"
+
+# Проверка контрактов токенов
+python main.py --mode test
+```
+
+## ⚠️ Важные заметки
+
+### Безопасность
+- 🔐 Никогда не коммитьте `.env` файл
+- 🔑 Используйте надежные API ключи
+- 🛡️ Ограничьте доступ к Telegram боту
+
+### Производительность
+- ⚡ Мониторинг работает каждые 30 секунд
+- 📦 Сканирует последние 5 блоков
+- 💾 Автоматически предотвращает дубликаты
+
+### Ограничения
+- 🔄 Зависит от стабильности RPC провайдера
+- 📊 Цены обновляются каждые 5 минут
+- 🐋 Работает только с ERC-20 токенами
+
+## 🤝 Поддержка
+
+При возникновении проблем:
+
+1. Проверьте логи: `railway logs` или локальный лог файл
+2. Убедитесь что все переменные окружения настроены
+3. Проверьте валидность адресов кошельков и токенов
+4. Протестируйте подключения: `python main.py --mode test`
+
+## 📄 Лицензия
+
+Этот проект является форком DAO Treasury Monitor и наследует его лицензию. 
