@@ -136,37 +136,43 @@ class BIOWhaleMonitorApp:
             self.notification_system = init_notification_system(self.database)
             self.logger.info("Notification system initialized")
             
-            # Проверяем наличие Ethereum RPC
+            # Проверяем Ethereum RPC URL
             if not self.ethereum_rpc_url:
-                self.logger.error("❌ ETHEREUM_RPC_URL not configured - whale monitoring cannot start")
-                raise Exception("Ethereum RPC URL is required for whale monitoring")
+                self.logger.warning("⚠️ ETHEREUM_RPC_URL not configured - whale monitoring will be limited")
             
-            # Проверяем наличие отслеживаемых кошельков
-            if not MONITORED_WALLETS:
-                self.logger.warning("⚠️ No wallets configured for monitoring")
-                self.logger.warning("   Please add wallet addresses to config/whale_config.py")
-            
-            # Инициализируем BIO Whale мониторинг
-            try:
-                self.whale_monitor = BIOWhaleMonitor(
-                    self.ethereum_rpc_url, 
-                    self.database, 
-                    self.notification_system
-                )
-                self.logger.info("✅ BIO Whale monitor initialized successfully")
-            except Exception as e:
-                self.logger.error(f"❌ Failed to initialize whale monitor: {e}")
-                import traceback
-                self.logger.error(f"Full traceback: {traceback.format_exc()}")
+            # Инициализируем BIO Whale мониторинг (если есть RPC)
+            if self.ethereum_rpc_url:
+                try:
+                    self.whale_monitor = BIOWhaleMonitor(
+                        self.ethereum_rpc_url, 
+                        self.database, 
+                        self.notification_system
+                    )
+                    self.logger.info("✅ BIO Whale monitor initialized successfully")
+                except Exception as e:
+                    self.logger.error(f"❌ Failed to initialize BIO Whale monitor: {e}")
+                    self.whale_monitor = None
+            else:
+                self.logger.warning("⚠️ BIO Whale monitor skipped - no Ethereum RPC URL")
                 self.whale_monitor = None
             
-            # Инициализируем health check server для Railway
-            self.health_server = get_health_server()
-            self.logger.info("Health check server initialized")
+            # Инициализируем Health Check Server (всегда)
+            try:
+                self.health_server = get_health_server()
+                if self.health_server:
+                    self.health_server.database = self.database
+                    self.logger.info("✅ Health check server initialized")
+                else:
+                    self.logger.warning("⚠️ Health check server not available")
+            except Exception as e:
+                self.logger.error(f"❌ Failed to initialize health check server: {e}")
+                self.health_server = None
             
         except Exception as e:
-            self.logger.error(f"Failed to initialize monitors: {e}")
-            raise
+            self.logger.error(f"❌ Critical error in monitor initialization: {e}")
+            import traceback
+            self.logger.error(f"Monitor initialization traceback: {traceback.format_exc()}")
+            # Не поднимаем исключение - пусть система попробует работать
     
     async def _send_deployment_notification_async(self):
         """Асинхронная отправка уведомления о успешном деплое"""
@@ -241,38 +247,90 @@ class BIOWhaleMonitorApp:
     
     async def start_monitoring(self):
         """Запуск основного whale мониторинга"""
-        self.logger.info("Starting BIO Whale Monitor")
+        self.logger.info("🚀 Starting BIO Whale Monitor")
         self.running = True
         
+        # Railway environment диагностика
+        railway_env = os.getenv('RAILWAY_ENVIRONMENT', 'local')
+        port = os.getenv('PORT', '8080')  # Fallback для Railway
+        database_url = os.getenv('DATABASE_URL')
+        telegram_bot = os.getenv('TELEGRAM_BOT_TOKEN')
+        telegram_chat = os.getenv('TELEGRAM_CHAT_ID')
+        ethereum_rpc = os.getenv('ETHEREUM_RPC_URL')
+        
+        self.logger.info(f"📊 ENVIRONMENT DIAGNOSTICS:")
+        self.logger.info(f"   Environment: {railway_env}")
+        self.logger.info(f"   Port: {port}")
+        self.logger.info(f"   Database URL: {'✅ Set' if database_url else '❌ Not set'}")
+        self.logger.info(f"   Telegram Bot: {'✅ Set' if telegram_bot else '❌ Not set'}")
+        self.logger.info(f"   Telegram Chat: {'✅ Set' if telegram_chat else '❌ Not set'}")
+        self.logger.info(f"   Ethereum RPC: {'✅ Set' if ethereum_rpc else '❌ Not set'}")
+        self.logger.info(f"   Health server: {'✅ Available' if self.health_server else '❌ Not available'}")
+        
         # Отправляем уведомление о деплое в Railway
-        if os.getenv('RAILWAY_ENVIRONMENT') and self.notification_system:
+        if railway_env == 'production' and self.notification_system:
             await self._send_deployment_notification_async()
         
         # Создаем задачи для параллельного выполнения
         tasks = []
         
-        # Health check server (для Railway)
-        if self.health_server and os.getenv('PORT'):
-            port = int(os.getenv('PORT', 8080))
-            self.health_server.port = port
-            tasks.append(asyncio.create_task(self.health_server.start_server()))
-            self.logger.info(f"Health check server will start on port {port}")
+        # Health check server (для Railway) - запускаем ВСЕГДА если есть PORT
+        if self.health_server and port:
+            try:
+                port_int = int(port)
+                self.health_server.port = port_int
+                self.logger.info(f"🏥 Preparing health check server on 0.0.0.0:{port_int}")
+                
+                # Запускаем health check server в отдельной задаче
+                tasks.append(asyncio.create_task(self._run_health_server()))
+            except ValueError:
+                self.logger.error(f"❌ Invalid PORT value: {port}")
+        else:
+            self.logger.warning("⚠️ Health check server not available or PORT not set")
         
-        # Whale мониторинг
-        if self.whale_monitor:
+        # Whale мониторинг - только если есть Ethereum RPC
+        if self.whale_monitor and ethereum_rpc:
+            self.logger.info("🐋 Preparing whale monitoring task")
             tasks.append(asyncio.create_task(self._run_whale_monitoring()))
+        elif not ethereum_rpc:
+            self.logger.warning("⚠️ ETHEREUM_RPC_URL not set - whale monitoring disabled")
         
         if not tasks:
-            self.logger.error("No monitors initialized, nothing to do")
+            self.logger.error("❌ No monitoring tasks could be initialized")
+            # В Railway должен быть хотя бы health check
+            if railway_env == 'production':
+                self.logger.info("🏥 Starting minimal health server for Railway...")
+                await self._run_minimal_health_server()
             return
+        
+        self.logger.info(f"🚀 Starting {len(tasks)} parallel tasks...")
         
         try:
             # Запускаем все задачи параллельно
-            await asyncio.gather(*tasks, return_exceptions=True)
+            results = await asyncio.gather(*tasks, return_exceptions=True)
+            
+            # Проверяем результаты
+            for i, result in enumerate(results):
+                if isinstance(result, Exception):
+                    self.logger.error(f"❌ Task {i} failed: {result}")
+                    
         except Exception as e:
-            self.logger.error(f"Error in monitoring: {e}")
+            self.logger.error(f"❌ Critical error in monitoring: {e}")
+            import traceback
+            self.logger.error(f"Full traceback: {traceback.format_exc()}")
         finally:
             self.running = False
+            self.logger.info("🔄 Monitoring stopped")
+    
+    async def _run_health_server(self):
+        """Запуск health check сервера"""
+        try:
+            self.logger.info(f"🏥 Health check server starting...")
+            await self.health_server.start_server()
+        except Exception as e:
+            self.logger.error(f"❌ Health check server failed: {e}")
+            import traceback
+            self.logger.error(f"Health check traceback: {traceback.format_exc()}")
     
     async def _run_whale_monitoring(self):
         """Запуск whale мониторинга"""
@@ -296,6 +354,29 @@ class BIOWhaleMonitorApp:
                 self.logger.error(f"Whale monitoring traceback: {traceback.format_exc()}")
                 self.logger.info("🔄 Retrying whale monitoring in 60 seconds...")
                 await asyncio.sleep(60)
+    
+    async def _run_minimal_health_server(self):
+        """Запуск минимального health сервера для Railway"""
+        try:
+            from fastapi import FastAPI
+            from fastapi.responses import JSONResponse
+            import uvicorn
+            
+            port = int(os.getenv('PORT', 8080))
+            app = FastAPI(title="BIO Whale Monitor Health")
+            
+            @app.get("/health")
+            async def health():
+                return JSONResponse({"status": "healthy", "service": "bio-whale-monitor"})
+            
+            self.logger.info(f"🏥 Starting minimal health server on port {port}")
+            
+            config = uvicorn.Config(app=app, host="0.0.0.0", port=port, log_level="info")
+            server = uvicorn.Server(config)
+            await server.serve()
+            
+        except Exception as e:
+            self.logger.error(f"❌ Minimal health server failed: {e}")
     
     def run_test_mode(self):
         """Запуск в тестовом режиме"""

@@ -235,16 +235,29 @@ class HealthCheckServer:
     
     async def start_server(self):
         """Запуск health check сервера"""
-        logger.info(f"Starting health check server on port {self.port}")
-        
-        config = uvicorn.Config(
-            app=self.app,
-            host="0.0.0.0",
-            port=self.port,
-            log_level="info"
-        )
-        server = uvicorn.Server(config)
-        await server.serve()
+        try:
+            logger.info(f"🏥 Initializing health check server...")
+            logger.info(f"   Host: 0.0.0.0")
+            logger.info(f"   Port: {self.port}")
+            logger.info(f"   Endpoints: /health, /status, /metrics")
+            
+            config = uvicorn.Config(
+                app=self.app,
+                host="0.0.0.0",
+                port=self.port,
+                log_level="info",
+                access_log=True
+            )
+            server = uvicorn.Server(config)
+            
+            logger.info(f"✅ Health check server configured, starting...")
+            await server.serve()
+            
+        except Exception as e:
+            logger.error(f"❌ Health check server startup failed: {e}")
+            import traceback
+            logger.error(f"Health check startup traceback: {traceback.format_exc()}")
+            raise
 
 # Глобальный экземпляр для использования в main.py
 health_server = HealthCheckServer()
