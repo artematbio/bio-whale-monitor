@@ -40,7 +40,8 @@ class HealthCheckServer:
             try:
                 health_status = await self._check_system_health()
                 
-                if health_status['status'] == 'healthy':
+                # Railway health check: 200 OK для healthy и degraded
+                if health_status['status'] in ['healthy', 'degraded']:
                     return JSONResponse(
                         status_code=200,
                         content=health_status
@@ -110,11 +111,22 @@ class HealthCheckServer:
         all_checks_healthy = all([
             db_healthy['status'] == 'ok',
             activity_healthy['status'] == 'ok',
-            env_healthy['status'] == 'ok'
+            env_healthy['status'] in ['ok', 'warning']  # warning не критично для Railway
         ])
         
-        if not all_checks_healthy:
+        # Проверяем есть ли критические ошибки (error статус)
+        critical_errors = any([
+            db_healthy['status'] == 'error',
+            activity_healthy['status'] == 'error', 
+            env_healthy['status'] == 'error'
+        ])
+        
+        if critical_errors:
             health_status['status'] = 'unhealthy'
+        elif not all_checks_healthy:
+            health_status['status'] = 'degraded'  # Работает с ограничениями
+        else:
+            health_status['status'] = 'healthy'
         
         return health_status
     
@@ -171,7 +183,7 @@ class HealthCheckServer:
     async def _check_environment_health(self) -> Dict[str, Any]:
         """Проверка переменных окружения"""
         required_vars = [
-            'HELIUS_API_KEY',
+            'ETHEREUM_RPC_URL',
             'TELEGRAM_BOT_TOKEN',
             'TELEGRAM_CHAT_ID'
         ]
@@ -180,6 +192,24 @@ class HealthCheckServer:
         for var in required_vars:
             if not os.getenv(var):
                 missing_vars.append(var)
+        
+        # В Railway режиме делаем health check менее строгим
+        railway_env = os.getenv('RAILWAY_ENVIRONMENT')
+        if railway_env == 'production':
+            # В Railway достаточно Telegram переменных для базового health check
+            telegram_vars = ['TELEGRAM_BOT_TOKEN', 'TELEGRAM_CHAT_ID']
+            telegram_missing = [var for var in telegram_vars if not os.getenv(var)]
+            
+            if telegram_missing:
+                return {
+                    'status': 'error',
+                    'message': f'Critical Railway variables missing: {", ".join(telegram_missing)}'
+                }
+            elif 'ETHEREUM_RPC_URL' in missing_vars:
+                return {
+                    'status': 'warning',
+                    'message': 'ETHEREUM_RPC_URL missing - whale monitoring disabled, but service healthy'
+                }
         
         if missing_vars:
             return {
