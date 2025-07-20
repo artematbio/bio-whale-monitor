@@ -234,34 +234,39 @@ class BIOWhaleMonitor:
                               token_amount: float, usd_value: float):
         """Отправка уведомления о whale транзакции"""
         try:
-            # Форматируем сообщение
-            message = f"""🐋 **WHALE ALERT: Large {token_info['symbol']} Transfer**
-
-💰 **Amount:** {token_amount:,.2f} {token_info['symbol']}
-💵 **USD Value:** ${usd_value:,.2f}
-
-📤 **From:** `{from_address}`
-📥 **To:** `{to_address}`
-
-🔗 **Transaction:** `{tx_hash}`
-🌐 **Etherscan:** https://etherscan.io/tx/{tx_hash}
-
-⏰ **Time:** {datetime.now(timezone.utc).strftime('%Y-%m-%d %H:%M:%S UTC')}
-
-🚨 **Alert Triggered:** {'Token amount' if token_amount >= WHALE_THRESHOLDS['token_amount'] else 'USD value'} threshold exceeded"""
+            # Подготавливаем данные для системы уведомлений
+            transaction_data = {
+                'tx_hash': tx_hash,
+                'timestamp': datetime.now(timezone.utc),
+                'dao_name': 'BIO Whale',  # Условное имя для whale транзакций
+                'blockchain': 'ethereum',
+                'from_address': from_address,
+                'to_address': to_address,
+                'token_address': token_info['contract_address'],
+                'token_symbol': token_info['symbol'],
+                'amount': token_amount,
+                'amount_usd': usd_value,
+                'tx_type': 'outgoing',
+                'alert_triggered': True,
+                'metadata': {
+                    'whale_alert': True,
+                    'token_threshold': token_amount >= WHALE_THRESHOLDS['token_amount'],
+                    'usd_threshold': usd_value >= WHALE_THRESHOLDS['usd_amount'],
+                    'etherscan_url': f"https://etherscan.io/tx/{tx_hash}",
+                    'contract_address': token_info['contract_address']
+                }
+            }
             
             # Отправляем через систему уведомлений
             if self.notification_system:
-                success = await self.notification_system.send_alert(
-                    title=f"🐋 {token_info['symbol']} Whale Alert",
-                    message=message,
-                    alert_type="whale_transaction"
-                )
+                success = await self.notification_system.send_transaction_alert(transaction_data)
                 
                 if success:
-                    self.logger.info(f"📨 Whale alert sent successfully")
+                    self.logger.info(f"📨 Whale alert sent successfully to Telegram")
                 else:
-                    self.logger.warning(f"❌ Failed to send whale alert")
+                    self.logger.warning(f"❌ Failed to send whale alert to Telegram")
+            else:
+                self.logger.debug("📤 Notification system not available - alert not sent")
             
         except Exception as e:
             self.logger.error(f"❌ Failed to send whale alert: {e}")
