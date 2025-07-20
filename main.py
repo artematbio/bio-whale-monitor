@@ -74,9 +74,22 @@ def setup_logging(log_level: str = 'INFO', log_file: Optional[str] = None):
     logging.getLogger('urllib3').setLevel(logging.WARNING)
 
 def get_database():
-    """Получение экземпляра базы данных (SQLite или PostgreSQL)"""
+    """Получение экземпляра базы данных (SQLite, PostgreSQL или Supabase)"""
     
-    # Проверяем переменные окружения для Railway
+    # Проверяем Supabase переменные для Railway
+    supabase_url = os.getenv('SUPABASE_URL')
+    supabase_service_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
+    
+    if supabase_url and supabase_service_key and POSTGRESQL_AVAILABLE:
+        # Строим DATABASE_URL для Supabase
+        # Из https://zddofopvesleeuonfgpe.supabase.co извлекаем project_ref
+        project_ref = supabase_url.replace('https://', '').replace('.supabase.co', '')
+        database_url = f"postgresql://postgres:{supabase_service_key}@db.{project_ref}.supabase.co:5432/postgres"
+        
+        logging.info(f"Using Supabase database for Railway deployment: db.{project_ref}.supabase.co")
+        return PostgreSQLDatabase(database_url)
+    
+    # Проверяем стандартные переменные PostgreSQL для Railway
     database_url = os.getenv('DATABASE_URL') or os.getenv('DATABASE_PUBLIC_URL')
     
     if database_url and POSTGRESQL_AVAILABLE:
@@ -254,17 +267,30 @@ class BIOWhaleMonitorApp:
         railway_env = os.getenv('RAILWAY_ENVIRONMENT', 'local')
         port = os.getenv('PORT', '8080')  # Fallback для Railway
         database_url = os.getenv('DATABASE_URL')
+        supabase_url = os.getenv('SUPABASE_URL')
+        supabase_key = os.getenv('SUPABASE_SERVICE_ROLE_KEY')
         telegram_bot = os.getenv('TELEGRAM_BOT_TOKEN')
         telegram_chat = os.getenv('TELEGRAM_CHAT_ID')
         ethereum_rpc = os.getenv('ETHEREUM_RPC_URL')
+        coingecko_key = os.getenv('COINGECKO_API_KEY')
         
         self.logger.info(f"📊 ENVIRONMENT DIAGNOSTICS:")
         self.logger.info(f"   Environment: {railway_env}")
         self.logger.info(f"   Port: {port}")
-        self.logger.info(f"   Database URL: {'✅ Set' if database_url else '❌ Not set'}")
+        
+        # Database диагностика
+        if supabase_url and supabase_key:
+            project_ref = supabase_url.replace('https://', '').replace('.supabase.co', '')
+            self.logger.info(f"   Database: ✅ Supabase ({project_ref})")
+        elif database_url:
+            self.logger.info(f"   Database: ✅ PostgreSQL")
+        else:
+            self.logger.info(f"   Database: ⚠️ SQLite (local)")
+            
         self.logger.info(f"   Telegram Bot: {'✅ Set' if telegram_bot else '❌ Not set'}")
         self.logger.info(f"   Telegram Chat: {'✅ Set' if telegram_chat else '❌ Not set'}")
         self.logger.info(f"   Ethereum RPC: {'✅ Set' if ethereum_rpc else '❌ Not set'}")
+        self.logger.info(f"   CoinGecko API: {'✅ Set' if coingecko_key else '⚠️ Not set'}")
         self.logger.info(f"   Health server: {'✅ Available' if self.health_server else '❌ Not available'}")
         
         # Отправляем уведомление о деплое в Railway

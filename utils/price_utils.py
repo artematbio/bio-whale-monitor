@@ -13,9 +13,10 @@ import os
 
 logger = logging.getLogger(__name__)
 
-# Константы CoinGecko API (как в pool_analyzer.py)
+# Константы CoinGecko API 
 COINGECKO_ENDPOINT = "https://pro-api.coingecko.com/api/v3/"
-COINGECKO_API_KEY = "CG-9MrJcucBMMx5HKnXeVBD8oSb"
+# Используем API ключ из переменной окружения или fallback
+COINGECKO_API_KEY = os.getenv('COINGECKO_API_KEY', 'CG-9MrJcucBMMx5HKnXeVBD8oSb')
 
 class PriceCache:
     """Кэш для цен токенов"""
